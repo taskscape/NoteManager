@@ -4,7 +4,7 @@ using System.Text;
 
 namespace NoteManager.App.Services;
 
-internal sealed class UiAutomationServer : IDisposable
+public sealed class UiAutomationServer : IDisposable
 {
     private const string FolderCommandPrefix = "folder|";
     private const string ImportPdfCommandPrefix = "import-pdf|";

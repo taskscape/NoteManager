@@ -4,6 +4,8 @@ obj/
 artifacts/
 **/.notes/
 installer/publish/
+installer/publish-macos/
 installer/Output/
 *.user
 *.suo
+**/.DS_Store

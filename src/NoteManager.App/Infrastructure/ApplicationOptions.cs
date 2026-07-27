@@ -3,13 +3,13 @@ using System.Text.RegularExpressions;
 
 namespace NoteManager.App.Infrastructure;
 
-internal sealed record ApplicationOptions(
+public sealed record ApplicationOptions(
     string? FolderPath,
     string? AutomationPipeName,
     Uri? InfostackerBaseUri)
 {
     private static readonly Regex PipeNamePattern =
-        new(@"^[A-Za-z0-9._-]+$", RegexOptions.CultureInvariant);
+        new(@"^[A-Za-z0-9._-]{1,32}$", RegexOptions.CultureInvariant);
 
     public static ApplicationOptions Parse(IReadOnlyList<string> arguments)
     {
@@ -30,7 +30,7 @@ internal sealed record ApplicationOptions(
                     if (!PipeNamePattern.IsMatch(candidate))
                     {
                         throw new ArgumentException(
-                            "The automation pipe name may contain only letters, numbers, dots, underscores, and hyphens.");
+                            "The automation pipe name must be 1–32 characters and may contain only letters, numbers, dots, underscores, and hyphens.");
                     }
 
                     automationPipeName = candidate;

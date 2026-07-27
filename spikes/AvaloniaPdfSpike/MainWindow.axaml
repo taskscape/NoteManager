@@ -1,0 +1,64 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d" d:DesignWidth="1000" d:DesignHeight="760"
+        x:Class="AvaloniaPdfSpike.MainWindow"
+        Width="1000"
+        Height="760"
+        MinWidth="720"
+        MinHeight="520"
+        Title="NoteManager Avalonia PDF Spike">
+    <Grid RowDefinitions="Auto,Auto,*" Margin="16">
+        <TextBlock FontSize="22"
+                   FontWeight="SemiBold"
+                   Text="Avalonia 12 native PDF spike" />
+
+        <Grid Grid.Row="1"
+              Margin="0,10,0,10"
+              ColumnDefinitions="*,Auto,Auto"
+              ColumnSpacing="12">
+            <StackPanel>
+                <TextBlock x:Name="StatusText"
+                           FontWeight="SemiBold"
+                           Text="Preparing local PDF…" />
+                <TextBlock x:Name="PathText"
+                           Margin="0,3,0,0"
+                           FontSize="12"
+                           TextWrapping="Wrap" />
+            </StackPanel>
+            <Button Grid.Column="1"
+                    Padding="14,8"
+                    Click="ReloadButton_OnClick"
+                    Content="Reload PDF" />
+            <Button Grid.Column="2"
+                    Padding="14,8"
+                    Click="PrintButton_OnClick"
+                    Content="Test print UI" />
+        </Grid>
+
+        <ScrollViewer x:Name="ViewerScrollViewer"
+                      Grid.Row="2"
+                      HorizontalScrollBarVisibility="Disabled"
+                      VerticalScrollBarVisibility="Auto">
+            <StackPanel Spacing="12">
+                <TextBlock FontWeight="SemiBold" Text="PDF viewer 1" />
+                <Border Height="520"
+                        BorderBrush="#808080"
+                        BorderThickness="1"
+                        CornerRadius="4"
+                        ClipToBounds="True">
+                    <NativeWebView x:Name="PdfWebView" />
+                </Border>
+                <TextBlock FontWeight="SemiBold" Text="PDF viewer 2" />
+                <Border Height="520"
+                        BorderBrush="#808080"
+                        BorderThickness="1"
+                        CornerRadius="4"
+                        ClipToBounds="True">
+                    <NativeWebView x:Name="SecondPdfWebView" />
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
+</Window>

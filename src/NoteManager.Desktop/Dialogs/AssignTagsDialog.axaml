@@ -1,0 +1,55 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="NoteManager.Desktop.Dialogs.AssignTagsDialog"
+        Width="540"
+        Height="640"
+        MinHeight="480"
+        WindowStartupLocation="CenterOwner"
+        Title="Assign tags">
+  <Grid Margin="20"
+        RowDefinitions="Auto,Auto,*,Auto,Auto,Auto"
+        RowSpacing="12">
+    <TextBlock x:Name="HeadingText"
+               FontSize="19"
+               FontWeight="SemiBold"
+               TextWrapping="Wrap" />
+    <TextBox x:Name="SearchBox"
+             Grid.Row="1"
+             PlaceholderText="Filter tags"
+             TextChanged="SearchBox_OnTextChanged" />
+    <Border Grid.Row="2"
+            BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+            BorderThickness="1"
+            CornerRadius="4">
+      <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <ItemsControl x:Name="TagItems">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate>
+              <CheckBox Margin="10,6"
+                        Content="{Binding Name}"
+                        IsChecked="{Binding IsSelected, Mode=TwoWay}" />
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </ScrollViewer>
+    </Border>
+    <TextBox x:Name="NewTagsBox"
+             Grid.Row="3"
+             PlaceholderText="New tags separated by spaces, commas, or semicolons" />
+    <TextBlock x:Name="ValidationText"
+               Grid.Row="4"
+               Foreground="#D92D20"
+               TextWrapping="Wrap" />
+    <StackPanel Grid.Row="5"
+                HorizontalAlignment="Right"
+                Orientation="Horizontal"
+                Spacing="10">
+      <Button Padding="14,8"
+              Click="Cancel_OnClick"
+              Content="Cancel" />
+      <Button Classes="primary"
+              Click="Save_OnClick"
+              Content="Save tags" />
+    </StackPanel>
+  </Grid>
+</Window>

@@ -1,18 +1,19 @@
 # NoteManager Installer
 
-This folder publishes the .NET 8 WPF application and packages the complete
-publish output as an Inno Setup installer.
+This folder packages the cross-platform .NET 8 Avalonia application for
+Windows and macOS.
 
 ## Prerequisites
 
 - The .NET 8 SDK selected by the repository `global.json`.
 - Inno Setup 6 or 7. The script searches `PATH` and the standard 32-bit and
   64-bit installation folders, or accepts an explicit `-IsccPath`.
-- The Microsoft Edge WebView2 Evergreen Runtime on the target computer. It is
-  normally present on Windows 11; it can be obtained from the
-  [official WebView2 download page](https://developer.microsoft.com/microsoft-edge/webview2/).
+- The platform web view used by Avalonia (WebView2 on Windows and WKWebView on
+  macOS) for embedded PDF display.
 
 ## Build
+
+### Windows
 
 From the repository root:
 
@@ -51,11 +52,26 @@ The build script favors cold startup over output size:
 - precompiles managed assemblies with ReadyToRun and composite ReadyToRun;
 - disables tiered compilation so startup does not wait for later JIT tiers;
 - keeps the application folder-based, avoiding single-file extraction at launch;
-- disables trimming because WPF and WebView2 use runtime-discovered types;
+- disables trimming because Avalonia and native web views use
+  runtime-discovered types;
 - omits debug symbols and creates a deterministic release build.
 
 The resulting installer is larger than a framework-dependent or trimmed build,
 but the target computer does not need a separately installed .NET runtime.
+
+### macOS
+
+From macOS, build a self-contained application bundle for the current
+architecture:
+
+```bash
+./installer/build-macos.sh 1.0.0 osx-arm64
+```
+
+Use `osx-x64` for Intel Macs. The application bundle is written to
+`installer/Output/NoteManager-<version>-<runtime>.app`. Set
+`NOTEMANAGER_CODESIGN_IDENTITY` to sign the bundle during the build; otherwise
+an ad-hoc signature is applied when `codesign` is available.
 
 ## Install
 

@@ -1,0 +1,27 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="NoteManager.Desktop.Controls.PdfViewer">
+  <Grid RowDefinitions="Auto,*">
+    <Grid Margin="0,0,0,7" ColumnDefinitions="*,Auto">
+      <StackPanel>
+        <TextBlock x:Name="FileNameText"
+                   FontWeight="SemiBold" />
+        <TextBlock x:Name="StatusText"
+                   FontSize="11"
+                   Foreground="#667085"
+                   Text="Preparing PDF…" />
+      </StackPanel>
+      <Button Grid.Column="1"
+              Padding="10,5"
+              Click="OpenExternally_OnClick"
+              Content="Open externally" />
+    </Grid>
+    <Border Grid.Row="1"
+            BorderBrush="#98A2B3"
+            BorderThickness="1"
+            CornerRadius="4"
+            ClipToBounds="True">
+      <NativeWebView x:Name="WebView" />
+    </Border>
+  </Grid>
+</UserControl>

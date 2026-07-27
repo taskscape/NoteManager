@@ -1,75 +1,47 @@
 # NoteManager
 
-NoteManager is a .NET 8 WPF desktop application inspired by the supplied three-pane notebook screenshot. It recreates the dense tag navigation, searchable note list, formatting toolbar, selected-note metadata, and a fully interactive in-app PDF preview.
+NoteManager is a cross-platform .NET 8 desktop application built with Avalonia.
+It provides tag navigation, a searchable note list, Markdown editing, note
+metadata, PDF embeds, and public-link publishing on Windows and macOS.
 
 ## Run
 
-From PowerShell in the repository root:
+From the repository root on Windows or macOS:
 
-```powershell
-dotnet run --project .\src\NoteManager.App\NoteManager.App.csproj
+```bash
+dotnet run --project src/NoteManager.Desktop/NoteManager.Desktop.csproj
 ```
 
 The repository pins the .NET 8 SDK through `global.json`. On startup, the application recursively loads the Obsidian vault at:
 
 ```text
-C:\Projects\Obsidian
+SampleNotes
 ```
 
-Use **File → Open folder…** or `Ctrl+O` to switch to another Markdown folder.
+Use **File → Open folder…**, `Ctrl+O` on Windows, or `Command+O` on macOS to
+switch to another Markdown folder.
 
 For a dialog-free automated launch, inject the startup folder:
 
-```powershell
-dotnet run --project .\src\NoteManager.App\NoteManager.App.csproj -- --folder .\SampleNotes
+```bash
+dotnet run --project src/NoteManager.Desktop/NoteManager.Desktop.csproj -- \
+  --folder SampleNotes
 ```
 
 ## Automated regression tests
 
-The primary UI regression lane uses
-[FlaUI 5](https://github.com/FlaUI/FlaUI) with the UIA3 provider and
-[NUnit 4](https://nunit.org/). It launches the real WPF executable and verifies
-the application through Windows UI Automation, native dialogs, the clipboard,
-filesystem outcomes, a loopback Infostacker fake, and initialized WebView2 PDF
-surfaces.
+The portable service and view-model suite runs on both operating systems:
 
-Run all service and UI tests from an unlocked interactive Windows session:
-
-```powershell
-.\tests\Run-AllTests.ps1 -Configuration Debug
+```bash
+dotnet test tests/NoteManager.App.Tests/NoteManager.App.Tests.csproj
 ```
 
-Run only the serialized UI suite, or filter it to one fixture:
-
-```powershell
-.\tests\Run-UiTests.ps1 -Configuration Debug
-
-.\tests\Run-UiTests.ps1 `
-  -Filter "FullyQualifiedName~TagAssignmentUiTests"
-```
-
-Every UI test creates a separate guarded vault below the user's temporary
-folder. The data covers recursive folders, tagged and untagged notes, multiple
-tag blocks, recent/all tag catalogs, Unicode and body-only searches, multiple
-PDF embeds, filename collisions, publishing attachments, and a large indexing
-set. The vault and its `.notes` database are removed after the scenario.
-
-The suite covers recursive loading and indexing; tag/search navigation;
-create/delete and all automatic-save boundaries; folder switching during
-background indexing; tag validation and block merging; public-link publishing
-and clipboard output; multiple PDF viewers; and external-PDF copy, collision
-rename, embed, save, and preview refresh. Failures attach a screen capture and
-UI Automation tree below `artifacts\ui-tests`; runner `.trx` files are stored in
-the same area.
-
-See
-[`tests\NoteManager.App.UiTests\README.md`](tests/NoteManager.App.UiTests/README.md)
-for the complete regression matrix, test-vault design, runner requirements, and
-guidance for adding scenarios.
+The former WPF/FlaUI suite remains under `tests/NoteManager.App.UiTests` as
+migration reference, but is not part of the cross-platform solution build.
 
 ## Build the Windows installer
 
-Inno Setup 6 or 7 can package a self-contained, startup-optimized Release build:
+Inno Setup 6 or 7 can package a self-contained Avalonia Release build:
 
 ```powershell
 .\installer\build-installer.ps1
@@ -81,11 +53,17 @@ The finished artifact is written to:
 installer\Output\NoteManager-1.0.0-win-x64-Setup.exe
 ```
 
-Pass `-Version 1.2.0` to version a release. The publish enables composite
-ReadyToRun and disables tiered compilation, trimming, and single-file extraction
-to favor predictable WPF startup. See
+Pass `-Version 1.2.0` to version a release. See
 [`installer\README.md`](installer/README.md) for prerequisites, ARM64 builds, and
 unattended installation.
+
+On macOS:
+
+```bash
+./installer/build-macos.sh 1.0.0 osx-arm64
+```
+
+Use `osx-x64` for Intel Macs.
 
 ## Included interactions
 
@@ -98,7 +76,10 @@ unattended installation.
 - Edit Markdown directly; dirty notes are saved atomically when selecting another note or view, changing folders, publishing, or closing the application.
 - Drag one or more PDF files onto a note row or the Markdown editor to insert Obsidian `![[...]]` embeds. PDFs dropped from outside the open folder are copied to its root and receive `(1)`, `(2)`, and later suffixes when names collide.
 - View each Obsidian PDF transclusion in an interactive Edge PDF viewer below the Markdown source.
-- Use the PDF viewer's page navigation, scrolling, zoom, search, text selection, outline, print, save, and full-screen controls, or click **Open PDF** to use the default desktop application.
+- Use the platform PDF viewer for scrolling, zooming, selection, printing, and
+  saving, or click **Open PDF** to use the default desktop application. Viewer
+  toolbar capabilities vary by operating system; PDF text-search parity is not
+  a migration requirement.
 - Click **Share** to open a public-link panel directly beneath the main toolbar button. Publishing sends the selected note and its embedded attachments to Infostacker, then copies the returned public URL to the clipboard.
 - Click **Create** (or press `Ctrl+N`) to create and select an empty `Untitled note.md` in the selected folder's root. Numbered names are used when needed.
 - Click **Delete**, then confirm the warning, to permanently remove the selected Markdown file from disk.
@@ -148,7 +129,7 @@ criteria, and comprehensive implementation checklist are specified in
 UI tests can opt into a current-user-only named pipe and change the folder in the running application without invoking the native picker:
 
 ```powershell
-dotnet run --project .\src\NoteManager.App\NoteManager.App.csproj -- `
+dotnet run --project .\src\NoteManager.Desktop\NoteManager.Desktop.csproj -- `
   --folder .\SampleNotes `
   --automation-pipe NoteManager.UiTest
 
@@ -160,7 +141,7 @@ dotnet run --project .\src\NoteManager.App\NoteManager.App.csproj -- `
 The pipe listener is disabled unless `--automation-pipe` is explicitly supplied. Both the injected startup path and runtime commands call the same `ChangeFolderAsync` path as the production folder picker.
 
 The FlaUI suite also uses an `import-pdf|<path>` automation command. It is
-available only when the opt-in pipe is enabled, is dispatched on the WPF UI
+available only when the opt-in pipe is enabled, is dispatched on the Avalonia UI
 thread, and calls the same PDF import path as a real drop. This makes collision,
 copy, embed, save, and viewer assertions deterministic without synthetic mouse
 input.
@@ -190,7 +171,7 @@ Following the [`taskscape/InfostackerPlugin`](https://github.com/taskscape/Infos
 1. Reads the selected Markdown file and prefixes it with the filename without `.md`.
 2. Resolves files referenced by Obsidian `![[...]]` embeds from the selected vault.
 3. Sends a multipart `POST` to `https://shr.infostacker.com/sharing/uploadmarkdownwithfiles` using the `markdown` field and repeated `files` fields.
-4. Reads the returned post `id`, constructs `https://shr.infostacker.com/sharing/{id}`, and copies it to the Windows clipboard.
+4. Reads the returned post `id`, constructs `https://shr.infostacker.com/sharing/{id}`, and copies it to the platform clipboard.
 
 The request is made only after the user presses the publish button. The note and combined attachments are checked against the plugin's 100 MB limit before upload. An unreadable attachment is skipped, matching the plugin behavior, while an unavailable service or rejected request is reported inside the Share panel.
 
@@ -268,19 +249,18 @@ These files contain synthetic business, research, invoice, receipt, parcel, and 
 ## Project structure
 
 ```text
+src/NoteManager.Core/
+  NoteManager.Core.csproj  platform-neutral models, services, and view model
+src/NoteManager.Desktop/
+  Controls/                Avalonia PDF viewer
+  Dialogs/                 cross-platform tag and confirmation dialogs
+  MainWindow.axaml          Avalonia three-pane desktop interface
+  Program.cs               Windows/macOS application entry point
 src/NoteManager.App/
-  Assets/          original synthetic PDF artwork
-  Controls/        note thumbnails and document preview UI
-  Infrastructure/ binding helpers and commands
-  Models/          tag-navigation and note models
-  Services/        Markdown loading, metadata/PDF parsing, SQLite FTS indexing, and sample generation
-  ViewModels/      folder loading, background indexing, full-text/tag filtering, and selection behavior
-  MainWindow.xaml  high-fidelity three-pane interface
+  Legacy WPF UI retained as migration reference; not in the portable solution
 tests/
-  NoteManager.App.Tests/     parser, editor, index, and PDF service tests
-  NoteManager.App.UiTests/   FlaUI/NUnit executable-level regression suite
-  Run-AllTests.ps1           serialized build, service, and UI entry point
-  Run-UiTests.ps1            focused UI runner with TRX and failure artifacts
+  NoteManager.App.Tests/     portable parser, editor, index, PDF, and view-model tests
+  NoteManager.App.UiTests/   legacy Windows-only FlaUI regression reference
 ```
 
 Visual comparison evidence and the final design review are documented in `design-qa.md`.

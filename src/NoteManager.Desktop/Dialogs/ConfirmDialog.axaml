@@ -1,0 +1,27 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="NoteManager.Desktop.Dialogs.ConfirmDialog"
+        Width="430"
+        SizeToContent="Height"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        Title="Confirm">
+  <Grid Margin="22"
+        RowDefinitions="Auto,Auto"
+        RowSpacing="20">
+    <TextBlock x:Name="MessageText"
+               FontSize="15"
+               TextWrapping="Wrap" />
+    <StackPanel Grid.Row="1"
+                HorizontalAlignment="Right"
+                Orientation="Horizontal"
+                Spacing="10">
+      <Button Padding="14,8"
+              Click="Cancel_OnClick"
+              Content="Cancel" />
+      <Button Classes="primary"
+              Click="Confirm_OnClick"
+              Content="Delete" />
+    </StackPanel>
+  </Grid>
+</Window>

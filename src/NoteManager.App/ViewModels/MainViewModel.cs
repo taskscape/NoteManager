@@ -3,7 +3,6 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Text;
-using System.Windows.Data;
 using NoteManager.App.Infrastructure;
 using NoteManager.App.Models;
 using NoteManager.App.Services;
@@ -13,6 +12,7 @@ namespace NoteManager.App.ViewModels;
 public sealed class MainViewModel : ObservableObject, IDisposable
 {
     private readonly RangeObservableCollection<NoteItem> _allNotes;
+    private readonly RangeObservableCollection<NoteItem> _visibleNotes;
     private readonly InfostackerPublishingService _infostackerPublishingService;
     private CancellationTokenSource? _indexCancellation;
     private CancellationTokenSource? _publishCancellation;
@@ -44,12 +44,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         _infostackerPublishingService =
             infostackerPublishingService ?? new InfostackerPublishingService();
         _allNotes = new RangeObservableCollection<NoteItem>();
+        _visibleNotes = new RangeObservableCollection<NoteItem>();
         _allNotes.ReplaceRange(SampleDataService.CreateNotes());
         NavigationItems = [];
         RebuildTagNavigation();
-
-        NotesView = CollectionViewSource.GetDefaultView(_allNotes);
-        NotesView.Filter = FilterNote;
 
         NewNoteCommand = new AsyncRelayCommand(_ => CreateNewNoteAsync(), _ => CanCreateNote);
         ClearTagFilterCommand = new RelayCommand(_ => ClearTagFilter());
@@ -60,12 +58,13 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         ViewModeCommand = new RelayCommand(
             parameter => ChangeView(parameter?.ToString() ?? "View updated"));
 
+        _visibleNotes.ReplaceRange(_allNotes);
         SelectedNote = _allNotes.First(note => note.ThumbnailKind == ThumbnailKind.SpacePoster);
         SampleDocumentService.EnsureAll(_allNotes);
     }
 
     public ObservableCollection<NavigationItem> NavigationItems { get; }
-    public ICollectionView NotesView { get; }
+    public ObservableCollection<NoteItem> NotesView => _visibleNotes;
 
     public AsyncRelayCommand NewNoteCommand { get; }
     public RelayCommand ClearTagFilterCommand { get; }
@@ -96,7 +95,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         private set => SetProperty(ref _centerHeading, value);
     }
 
-    public string VisibleNoteCount => $"{NotesView.Cast<object>().Count():N0} notes";
+    public string VisibleNoteCount => $"{NotesView.Count:N0} notes";
 
     public NoteItem? SelectedNote
     {
@@ -158,9 +157,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             }
 
             CenterHeading = value?.Label ?? "All notes";
-            NotesView.Refresh();
-            EnsureSelectedNote();
-            OnPropertyChanged(nameof(VisibleNoteCount));
+            RefreshNoteFilter();
         }
     }
 
@@ -310,9 +307,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             ?? NavigationItems.FirstOrDefault(item =>
                 item.FilterKey == AllNotesFilterKey);
         SelectedNavigationItem = restoredNavigation;
-        NotesView.Refresh();
-        EnsureSelectedNote();
-        OnPropertyChanged(nameof(VisibleNoteCount));
+        RefreshNoteFilter();
         SetStatus(
             normalizedTags.Length == 1
                 ? $"Assigned 1 tag to {note.FileName}"
@@ -320,13 +315,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         return true;
     }
 
-    private bool FilterNote(object item)
+    private bool FilterNote(NoteItem note)
     {
-        if (item is not NoteItem note)
-        {
-            return false;
-        }
-
         var selectedTag = SelectedNavigationItem?.FilterKey;
         if (selectedTag == UntaggedFilterKey && note.Tags.Length > 0)
         {
@@ -367,19 +357,19 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     private void RefreshNoteFilter()
     {
-        NotesView.Refresh();
+        _visibleNotes.ReplaceRange(_allNotes.Where(FilterNote));
         EnsureSelectedNote();
         OnPropertyChanged(nameof(VisibleNoteCount));
     }
 
     private void EnsureSelectedNote()
     {
-        if (SelectedNote is not null && NotesView.Cast<NoteItem>().Contains(SelectedNote))
+        if (SelectedNote is not null && NotesView.Contains(SelectedNote))
         {
             return;
         }
 
-        SelectedNote = NotesView.Cast<NoteItem>().FirstOrDefault();
+        SelectedNote = NotesView.FirstOrDefault();
     }
 
     private async Task CreateNewNoteAsync()
@@ -880,16 +870,14 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             CurrentFolderPath = Path.GetFullPath(folderPath);
             IsFolderMode = true;
             RebuildTagNavigation();
-            NotesView.Refresh();
             SelectedNavigationItem = NavigationItems.FirstOrDefault(item => item.FilterKey == AllNotesFilterKey);
             SelectedNote = selectedFilePath is null
-                ? NotesView.Cast<NoteItem>().FirstOrDefault()
+                ? NotesView.FirstOrDefault()
                 : NotesView
-                    .Cast<NoteItem>()
                     .FirstOrDefault(note => note.SourceFilePath.Equals(
                         selectedFilePath,
                         StringComparison.OrdinalIgnoreCase))
-                  ?? NotesView.Cast<NoteItem>().FirstOrDefault();
+                  ?? NotesView.FirstOrDefault();
             OnPropertyChanged(nameof(VisibleNoteCount));
 
             var skippedText = result.FailedFileCount > 0
