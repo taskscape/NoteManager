@@ -2,19 +2,21 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:controls="using:NoteManager.Desktop.Controls"
         xmlns:desktop="using:NoteManager.Desktop"
+        xmlns:icons="using:FluentIcons.Avalonia"
         x:Class="NoteManager.Desktop.MainWindow"
-        Width="1320"
-        Height="820"
-        MinWidth="960"
-        MinHeight="620"
+        Width="1480"
+        Height="940"
+        MinWidth="1040"
+        MinHeight="680"
+        Background="{DynamicResource AppBackgroundBrush}"
         DragDrop.AllowDrop="True"
         Title="NoteManager">
   <Window.Resources>
     <desktop:InverseBooleanConverter x:Key="NotBool" />
   </Window.Resources>
 
-  <Grid RowDefinitions="Auto,Auto,*,Auto">
-    <Menu>
+  <Grid RowDefinitions="Auto,66,*,36">
+    <Menu Background="{DynamicResource PanelBackgroundBrush}">
       <MenuItem Header="_File">
         <MenuItem Header="_New note"
                   Command="{Binding NewNoteCommand}" />
@@ -41,70 +43,94 @@
     </Menu>
 
     <Border Grid.Row="1"
-            Padding="12,9"
-            BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+            Padding="18,10"
+            Background="{DynamicResource PanelBackgroundBrush}"
+            BorderBrush="{DynamicResource BorderBrush}"
             BorderThickness="0,0,0,1">
-      <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,*,Auto">
-        <Button Classes="toolbar primary"
-                Command="{Binding NewNoteCommand}"
-                Content="New note" />
+      <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto"
+            ColumnSpacing="2">
+        <Button Classes="command"
+                Command="{Binding NewNoteCommand}">
+          <StackPanel Orientation="Horizontal" Spacing="9">
+            <icons:FluentIcon Icon="AddSquare"
+                              IconSize="Size20"
+                              Foreground="{DynamicResource AccentBrush}" />
+            <TextBlock VerticalAlignment="Center"
+                       Foreground="{DynamicResource AccentBrush}"
+                       Text="New note" />
+          </StackPanel>
+        </Button>
         <Button Grid.Column="1"
-                Classes="toolbar"
-                Click="OpenFolder_OnClick"
-                Content="Open folder" />
-        <Button Grid.Column="2"
-                Classes="toolbar"
-                Click="Tags_OnClick"
-                IsEnabled="{Binding CanAssignTags}"
-                Content="Tags" />
+                Classes="command"
+                Click="OpenFolder_OnClick">
+          <StackPanel Orientation="Horizontal" Spacing="9">
+            <icons:FluentIcon Icon="FolderOpen" IconSize="Size20" />
+            <TextBlock VerticalAlignment="Center" Text="Open folder" />
+          </StackPanel>
+        </Button>
+        <Border Grid.Column="2"
+                Margin="18,0"
+                Padding="12,7"
+                VerticalAlignment="Center"
+                Background="Transparent">
+          <TextBlock MaxWidth="420"
+                     Classes="secondary"
+                     FontSize="12"
+                     Text="{Binding CurrentFolderPath}"
+                     TextTrimming="CharacterEllipsis" />
+        </Border>
+
         <Button Grid.Column="3"
-                Classes="toolbar"
-                Click="ImportPdf_OnClick"
-                IsEnabled="{Binding CanDeleteSelectedNote}"
-                Content="Import PDF" />
-        <TextBlock Grid.Column="4"
-                   VerticalAlignment="Center"
-                   Foreground="#667085"
-                   Text="{Binding CurrentFolderPath}"
-                   TextTrimming="CharacterEllipsis" />
-        <StackPanel Grid.Column="5"
-                    Orientation="Horizontal"
-                    Spacing="8">
-          <Button Command="{Binding ShareCommand}"
-                  IsEnabled="{Binding CanPublishSelectedNote}"
-                  Content="Share" />
-          <Button Click="Delete_OnClick"
-                  IsEnabled="{Binding CanDeleteSelectedNote}"
-                  Content="Delete" />
-        </StackPanel>
+                Classes="command"
+                Command="{Binding ShareCommand}"
+                IsEnabled="{Binding CanPublishSelectedNote}">
+          <StackPanel Orientation="Horizontal" Spacing="9">
+            <icons:FluentIcon Icon="Share" IconSize="Size20" />
+            <TextBlock VerticalAlignment="Center" Text="Share" />
+          </StackPanel>
+        </Button>
+        <Button Grid.Column="4"
+                Classes="command danger"
+                Click="Delete_OnClick"
+                IsEnabled="{Binding CanDeleteSelectedNote}">
+          <StackPanel Orientation="Horizontal" Spacing="9">
+            <icons:FluentIcon Icon="Delete" IconSize="Size20" />
+            <TextBlock VerticalAlignment="Center" Text="Delete" />
+          </StackPanel>
+        </Button>
       </Grid>
     </Border>
 
     <Grid Grid.Row="2"
-          ColumnDefinitions="230,5,350,5,*">
-      <Border Padding="10"
-              BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+          ColumnDefinitions="20*,4,27*,4,53*">
+      <Border Background="{DynamicResource RailBackgroundBrush}"
+              BorderBrush="{DynamicResource BorderBrush}"
               BorderThickness="0,0,1,0">
-        <Grid RowDefinitions="Auto,*">
-          <StackPanel Margin="4,2,4,10">
-            <TextBlock Classes="section" Text="TAGS" />
-            <Button Margin="0,7,0,0"
-                    HorizontalAlignment="Stretch"
-                    Command="{Binding ClearTagFilterCommand}"
-                    Content="Show all notes" />
-          </StackPanel>
-          <ListBox Grid.Row="1"
+        <Grid Margin="20,22,16,18"
+              RowDefinitions="Auto,Auto,*">
+          <TextBlock Classes="section"
+                     Margin="8,0,0,8"
+                     Text="TAGS" />
+          <Button Grid.Row="1"
+                  Margin="0,0,0,10"
+                  HorizontalAlignment="Stretch"
+                  HorizontalContentAlignment="Left"
+                  Classes="command subtle"
+                  Command="{Binding ClearTagFilterCommand}">
+            <TextBlock VerticalAlignment="Center" Text="Show all notes" />
+          </Button>
+          <ListBox Grid.Row="2"
+                   Classes="rail"
                    ItemsSource="{Binding NavigationItems}"
                    SelectedItem="{Binding SelectedNavigationItem, Mode=TwoWay}">
             <ListBox.ItemTemplate>
               <DataTemplate>
-                <Grid Margin="5,4"
-                      ColumnDefinitions="*,Auto">
+                <Grid ColumnDefinitions="*,Auto">
                   <TextBlock Text="{Binding Label}"
                              TextTrimming="CharacterEllipsis" />
                   <TextBlock Grid.Column="1"
-                             Margin="8,0,0,0"
-                             Foreground="#667085"
+                             Margin="12,0,0,0"
+                             Classes="secondary"
                              Text="{Binding Count}" />
                 </Grid>
               </DataTemplate>
@@ -114,51 +140,74 @@
       </Border>
 
       <GridSplitter Grid.Column="1"
-                    ResizeDirection="Columns"
-                    Background="Transparent" />
+                    ResizeDirection="Columns" />
 
       <Border Grid.Column="2"
-              Padding="12"
-              BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+              Background="{DynamicResource PanelBackgroundBrush}"
+              BorderBrush="{DynamicResource BorderBrush}"
               BorderThickness="0,0,1,0">
-        <Grid RowDefinitions="Auto,Auto,*">
-          <Grid ColumnDefinitions="*,Auto">
-            <TextBlock FontSize="20"
+        <Grid Margin="18,22,14,16"
+              RowDefinitions="Auto,Auto,*">
+          <Grid Margin="6,0,6,12"
+                ColumnDefinitions="*,Auto">
+            <TextBlock FontSize="22"
                        FontWeight="SemiBold"
                        Text="{Binding CenterHeading}" />
             <TextBlock Grid.Column="1"
                        VerticalAlignment="Center"
-                       Foreground="#667085"
+                       Classes="secondary"
                        Text="{Binding VisibleNoteCount}" />
           </Grid>
-          <TextBox x:Name="SearchBox"
-                   Grid.Row="1"
-                   Margin="0,12,0,10"
-                   PlaceholderText="Search notes"
-                   Text="{Binding SearchText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+
+          <Grid Grid.Row="1"
+                Margin="0,0,0,12">
+            <TextBox x:Name="SearchBox"
+                     Padding="38,8,54,8"
+                     PlaceholderText="Search notes"
+                     Text="{Binding SearchText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+            <icons:FluentIcon Margin="13,0,0,0"
+                              HorizontalAlignment="Left"
+                              VerticalAlignment="Center"
+                              IsHitTestVisible="False"
+                              Icon="Search"
+                              IconSize="Size16"
+                              Foreground="{DynamicResource TextTertiaryBrush}" />
+            <TextBlock Margin="0,0,12,0"
+                       HorizontalAlignment="Right"
+                       VerticalAlignment="Center"
+                       IsHitTestVisible="False"
+                       Classes="tertiary"
+                       FontSize="11"
+                       Text="Ctrl/⌘ F" />
+          </Grid>
+
           <ListBox x:Name="NotesList"
                    Grid.Row="2"
+                   Classes="notes"
                    ItemsSource="{Binding NotesView}"
                    SelectedItem="{Binding SelectedNote, Mode=TwoWay}">
             <ListBox.ItemTemplate>
               <DataTemplate>
-                <Border Classes="card"
-                        Margin="0,0,0,8">
-                  <StackPanel Spacing="4">
-                    <TextBlock FontWeight="SemiBold"
+                <Border Padding="0,0,0,14"
+                        BorderBrush="{DynamicResource BorderBrush}"
+                        BorderThickness="0,0,0,1">
+                  <StackPanel Spacing="5">
+                    <TextBlock FontSize="15"
+                               FontWeight="SemiBold"
                                Text="{Binding Title}"
                                TextTrimming="CharacterEllipsis" />
-                    <TextBlock FontSize="12"
-                               Foreground="#667085"
+                    <TextBlock Classes="secondary"
+                               FontSize="12"
                                Text="{Binding Subtitle}"
                                TextTrimming="CharacterEllipsis" />
-                    <Grid ColumnDefinitions="*,Auto">
-                      <TextBlock FontSize="11"
-                                 Foreground="#667085"
+                    <Grid Margin="0,3,0,0"
+                          ColumnDefinitions="*,Auto">
+                      <TextBlock Classes="tertiary"
+                                 FontSize="11"
                                  Text="{Binding ModifiedAt}" />
                       <TextBlock Grid.Column="1"
+                                 Classes="tertiary"
                                  FontSize="11"
-                                 Foreground="#667085"
                                  Text="{Binding Size}" />
                     </Grid>
                   </StackPanel>
@@ -170,125 +219,197 @@
       </Border>
 
       <GridSplitter Grid.Column="3"
-                    ResizeDirection="Columns"
-                    Background="Transparent" />
+                    ResizeDirection="Columns" />
 
-      <Grid Grid.Column="4"
-            Margin="18"
-            RowDefinitions="Auto,*">
-        <Grid ColumnDefinitions="*,Auto">
-          <StackPanel>
-            <TextBlock FontSize="24"
-                       FontWeight="SemiBold"
-                       Text="{Binding SelectedNote.Title}"
-                       TextWrapping="Wrap" />
-            <TextBlock Margin="0,4,0,0"
-                       Foreground="#667085"
-                       Text="{Binding SelectedNote.Subtitle}"
-                       TextWrapping="Wrap" />
-          </StackPanel>
-          <Button Grid.Column="1"
-                  Command="{Binding OpenAttachmentCommand}"
-                  IsVisible="{Binding SelectedNote.IsMarkdownFile, Converter={StaticResource NotBool}}"
-                  Content="Open document" />
-        </Grid>
-
-        <ScrollViewer Grid.Row="1"
-                      Margin="0,16,0,0"
-                      HorizontalScrollBarVisibility="Disabled"
-                      VerticalScrollBarVisibility="Auto">
-          <StackPanel Spacing="14">
-            <ItemsControl ItemsSource="{Binding SelectedNote.Tags}">
-              <ItemsControl.ItemsPanel>
-                <ItemsPanelTemplate>
-                  <WrapPanel />
-                </ItemsPanelTemplate>
-              </ItemsControl.ItemsPanel>
-              <ItemsControl.ItemTemplate>
-                <DataTemplate>
-                  <Border Margin="0,0,6,6"
-                          Padding="8,3"
-                          Background="#E8F1FF"
-                          CornerRadius="10">
-                    <TextBlock Foreground="#175CD3"
-                               FontSize="11"
-                               Text="{Binding}" />
-                  </Border>
-                </DataTemplate>
-              </ItemsControl.ItemTemplate>
-            </ItemsControl>
-
-            <StackPanel IsVisible="{Binding SelectedNote.IsMarkdownFile}">
-              <TextBlock Classes="section" Text="MARKDOWN" />
-              <TextBox x:Name="MarkdownEditor"
-                       Margin="0,7,0,0"
-                       MinHeight="340"
-                       AcceptsReturn="True"
-                       TextWrapping="Wrap"
-                       VerticalContentAlignment="Top"
-                       Text="{Binding SelectedNote.PlainTextContent, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
-            </StackPanel>
-
-            <StackPanel IsVisible="{Binding SelectedNote.IsMarkdownFile, Converter={StaticResource NotBool}}">
-              <TextBlock Classes="section"
-                         Text="{Binding SelectedNote.DocumentHeading}" />
-              <TextBlock Margin="0,6,0,8"
-                         FontSize="17"
+      <Border Grid.Column="4"
+              Background="{DynamicResource AppBackgroundBrush}">
+        <Grid Margin="24,22,24,18"
+              RowDefinitions="Auto,*">
+          <Grid Margin="2,0,2,0"
+                ColumnDefinitions="*,Auto">
+            <StackPanel>
+              <TextBlock FontSize="25"
                          FontWeight="SemiBold"
-                         Text="{Binding SelectedNote.DocumentSubheading}" />
-              <ItemsControl ItemsSource="{Binding SelectedNote.Paragraphs}">
+                         Text="{Binding SelectedNote.Title}"
+                         TextWrapping="Wrap" />
+              <TextBlock Margin="0,5,0,0"
+                         Classes="secondary"
+                         Text="{Binding SelectedNote.Subtitle}"
+                         TextWrapping="Wrap" />
+            </StackPanel>
+            <Button Grid.Column="1"
+                    Classes="command"
+                    Command="{Binding OpenAttachmentCommand}"
+                    IsVisible="{Binding SelectedNote.IsMarkdownFile, Converter={StaticResource NotBool}}">
+              <StackPanel Orientation="Horizontal" Spacing="8">
+                <icons:FluentIcon Icon="Open" IconSize="Size20" />
+                <TextBlock VerticalAlignment="Center" Text="Open document" />
+              </StackPanel>
+            </Button>
+          </Grid>
+
+          <ScrollViewer Grid.Row="1"
+                        Margin="0,20,0,0"
+                        HorizontalScrollBarVisibility="Disabled"
+                        VerticalScrollBarVisibility="Auto">
+            <StackPanel Spacing="15">
+              <ItemsControl ItemsSource="{Binding SelectedNote.Tags}">
+                <ItemsControl.ItemsPanel>
+                  <ItemsPanelTemplate>
+                    <WrapPanel />
+                  </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
                 <ItemsControl.ItemTemplate>
                   <DataTemplate>
-                    <TextBlock Margin="0,0,0,10"
-                               Text="{Binding}"
-                               TextWrapping="Wrap" />
+                    <Border Margin="0,0,7,7"
+                            Padding="9,4"
+                            Background="{DynamicResource SelectionSurfaceBrush}"
+                            CornerRadius="12">
+                      <TextBlock Foreground="{DynamicResource AccentBrush}"
+                                 FontSize="11"
+                                 FontWeight="Medium"
+                                 Text="{Binding}" />
+                    </Border>
                   </DataTemplate>
                 </ItemsControl.ItemTemplate>
               </ItemsControl>
-            </StackPanel>
 
-            <ItemsControl ItemsSource="{Binding SelectedNote.PdfReferences}">
-              <ItemsControl.ItemTemplate>
-                <DataTemplate>
-                  <controls:PdfViewer Height="540"
-                                      Margin="0,0,0,12"
-                                      PdfPath="{Binding}" />
-                </DataTemplate>
-              </ItemsControl.ItemTemplate>
-            </ItemsControl>
-
-            <Border Classes="card"
-                    IsVisible="{Binding IsSharePanelOpen}">
-              <StackPanel Spacing="8">
-                <TextBlock FontWeight="SemiBold"
-                           Text="Publish public link" />
-                <TextBlock Text="{Binding ShareStatusText}"
-                           TextWrapping="Wrap" />
-                <StackPanel Orientation="Horizontal"
-                            Spacing="8">
-                  <Button Classes="primary"
-                          Click="Publish_OnClick"
-                          Content="{Binding ShareActionText}" />
-                  <Button Command="{Binding CloseShareCommand}"
-                          Content="Close" />
-                </StackPanel>
+              <StackPanel IsVisible="{Binding SelectedNote.IsMarkdownFile}">
+                <Grid Margin="2,0,0,7"
+                      ColumnDefinitions="*,Auto">
+                  <TextBlock VerticalAlignment="Center"
+                             Classes="section"
+                             Text="MARKDOWN" />
+                  <Button Grid.Column="1"
+                          Classes="editorAction"
+                          Click="Tags_OnClick"
+                          IsEnabled="{Binding CanAssignTags}"
+                          ToolTip.Tip="Assign tags to this note">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                      <icons:FluentIcon Icon="Tag"
+                                        IconSize="Size16" />
+                      <TextBlock VerticalAlignment="Center"
+                                 Text="Tags" />
+                    </StackPanel>
+                  </Button>
+                </Grid>
+                <TextBox x:Name="MarkdownEditor"
+                         MinHeight="470"
+                         Padding="19,17"
+                         AcceptsReturn="True"
+                         Background="{DynamicResource PanelBackgroundBrush}"
+                         BorderBrush="{DynamicResource BorderBrush}"
+                         CornerRadius="8"
+                         FontFamily="avares://Avalonia.Fonts.Inter/Assets#Inter"
+                         FontSize="14"
+                         LineHeight="23"
+                         TextWrapping="Wrap"
+                         VerticalContentAlignment="Top"
+                         Text="{Binding SelectedNote.PlainTextContent, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                <Button Margin="0,6,0,0"
+                        HorizontalAlignment="Right"
+                        Classes="editorAction"
+                        Click="ImportPdf_OnClick"
+                        IsEnabled="{Binding CanDeleteSelectedNote}"
+                        ToolTip.Tip="Insert PDF references into this note">
+                  <StackPanel Orientation="Horizontal" Spacing="6">
+                    <icons:FluentIcon Icon="DocumentPdf"
+                                      IconSize="Size16" />
+                    <TextBlock VerticalAlignment="Center"
+                               Text="Import PDF" />
+                  </StackPanel>
+                </Button>
               </StackPanel>
-            </Border>
-          </StackPanel>
-        </ScrollViewer>
-      </Grid>
+
+              <StackPanel IsVisible="{Binding SelectedNote.IsMarkdownFile, Converter={StaticResource NotBool}}">
+                <TextBlock Classes="section"
+                           Text="{Binding SelectedNote.DocumentHeading}" />
+                <TextBlock Margin="0,8,0,12"
+                           FontSize="18"
+                           FontWeight="SemiBold"
+                           Text="{Binding SelectedNote.DocumentSubheading}" />
+                <ItemsControl ItemsSource="{Binding SelectedNote.Paragraphs}">
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                      <TextBlock Margin="0,0,0,11"
+                                 LineHeight="22"
+                                 Text="{Binding}"
+                                 TextWrapping="Wrap" />
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </StackPanel>
+
+              <ItemsControl ItemsSource="{Binding SelectedNote.PdfReferences}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <controls:PdfViewer Height="560"
+                                        Margin="0,0,0,12"
+                                        PdfPath="{Binding}" />
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+
+              <Border Classes="surface"
+                      Padding="18"
+                      IsVisible="{Binding IsSharePanelOpen}">
+                <Grid ColumnDefinitions="Auto,*,Auto"
+                      ColumnSpacing="14">
+                  <Border Width="40"
+                          Height="40"
+                          Background="{DynamicResource SelectionSurfaceBrush}"
+                          CornerRadius="20">
+                    <icons:FluentIcon HorizontalAlignment="Center"
+                                      VerticalAlignment="Center"
+                                      Icon="Share"
+                                      IconSize="Size20"
+                                      Foreground="{DynamicResource AccentBrush}" />
+                  </Border>
+                  <StackPanel Grid.Column="1" Spacing="4">
+                    <TextBlock FontWeight="SemiBold"
+                               Text="Publish public link" />
+                    <TextBlock Classes="secondary"
+                               Text="{Binding ShareStatusText}"
+                               TextWrapping="Wrap" />
+                  </StackPanel>
+                  <StackPanel Grid.Column="2"
+                              VerticalAlignment="Center"
+                              Orientation="Horizontal"
+                              Spacing="8">
+                    <Button Classes="primary"
+                            Click="Publish_OnClick"
+                            Content="{Binding ShareActionText}" />
+                    <Button Classes="command"
+                            Command="{Binding CloseShareCommand}"
+                            Content="Close" />
+                  </StackPanel>
+                </Grid>
+              </Border>
+            </StackPanel>
+          </ScrollViewer>
+        </Grid>
+      </Border>
     </Grid>
 
     <Border Grid.Row="3"
-            Padding="12,7"
-            BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+            Padding="18,0"
+            Background="{DynamicResource PanelBackgroundBrush}"
+            BorderBrush="{DynamicResource BorderBrush}"
             BorderThickness="0,1,0,0">
-      <Grid ColumnDefinitions="*,Auto">
-        <TextBlock Text="{Binding StatusText}"
-                   TextTrimming="CharacterEllipsis" />
+      <Grid ColumnDefinitions="Auto,*,Auto"
+            ColumnSpacing="10">
+        <icons:FluentIcon VerticalAlignment="Center"
+                          Icon="CheckmarkCircle"
+                          IconSize="Size16"
+                          Foreground="{DynamicResource SuccessBrush}" />
         <TextBlock Grid.Column="1"
-                   Margin="12,0,0,0"
-                   Foreground="#667085"
+                   VerticalAlignment="Center"
+                   FontSize="11"
+                   Text="{Binding StatusText}" />
+        <TextBlock Grid.Column="2"
+                   VerticalAlignment="Center"
+                   Classes="secondary"
+                   FontSize="11"
                    Text="{Binding SearchIndexStatus}" />
       </Grid>
     </Border>
