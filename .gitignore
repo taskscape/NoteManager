@@ -1,0 +1,9 @@
+bin/
+obj/
+.vs/
+artifacts/
+**/.notes/
+installer/publish/
+installer/Output/
+*.user
+*.suo

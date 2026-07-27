@@ -1,0 +1,30 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NoteManager.App", "src\NoteManager.App\NoteManager.App.csproj", "{A1C64B6F-3D2E-46A2-8F7E-64218B641842}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NoteManager.App.Tests", "tests\NoteManager.App.Tests\NoteManager.App.Tests.csproj", "{9F829F14-BF7B-4CB4-8DE4-1C7EB40DB5C7}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NoteManager.App.UiTests", "tests\NoteManager.App.UiTests\NoteManager.App.UiTests.csproj", "{B7961763-3072-4A43-89D2-52A5373DA9CB}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{A1C64B6F-3D2E-46A2-8F7E-64218B641842}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A1C64B6F-3D2E-46A2-8F7E-64218B641842}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A1C64B6F-3D2E-46A2-8F7E-64218B641842}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A1C64B6F-3D2E-46A2-8F7E-64218B641842}.Release|Any CPU.Build.0 = Release|Any CPU
+		{9F829F14-BF7B-4CB4-8DE4-1C7EB40DB5C7}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{9F829F14-BF7B-4CB4-8DE4-1C7EB40DB5C7}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{9F829F14-BF7B-4CB4-8DE4-1C7EB40DB5C7}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{9F829F14-BF7B-4CB4-8DE4-1C7EB40DB5C7}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B7961763-3072-4A43-89D2-52A5373DA9CB}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B7961763-3072-4A43-89D2-52A5373DA9CB}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B7961763-3072-4A43-89D2-52A5373DA9CB}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B7961763-3072-4A43-89D2-52A5373DA9CB}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal
