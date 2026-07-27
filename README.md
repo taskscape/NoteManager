@@ -1,6 +1,6 @@
 # NoteManager
 
-NoteManager is a cross-platform .NET 8 desktop application built with Avalonia.
+NoteManager is a cross-platform .NET 10 desktop application built with Avalonia.
 It provides tag navigation, a searchable note list, Markdown editing, note
 metadata, PDF embeds, and public-link publishing on Windows and macOS.
 
@@ -12,7 +12,7 @@ From the repository root on Windows or macOS:
 dotnet run --project src/NoteManager.Desktop/NoteManager.Desktop.csproj
 ```
 
-The repository pins the .NET 8 SDK through `global.json`. On startup, the application recursively loads the Obsidian vault at:
+The repository pins the .NET 10 SDK through `global.json`. On startup, the application recursively loads the Obsidian vault at:
 
 ```text
 SampleNotes

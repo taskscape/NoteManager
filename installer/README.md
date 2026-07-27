@@ -1,15 +1,17 @@
 # NoteManager Installer
 
-This folder packages the cross-platform .NET 8 Avalonia application for
+This folder packages the cross-platform .NET 10 Avalonia application for
 Windows and macOS.
 
 ## Prerequisites
 
-- The .NET 8 SDK selected by the repository `global.json`.
+- The .NET 10 SDK selected by the repository `global.json`.
 - Inno Setup 6 or 7. The script searches `PATH` and the standard 32-bit and
   64-bit installation folders, or accepts an explicit `-IsccPath`.
 - The platform web view used by Avalonia (WebView2 on Windows and WKWebView on
   macOS) for embedded PDF display.
+- macOS 14 or newer for macOS builds, matching the supported .NET 10 runtime
+  platforms.
 
 ## Build
 
