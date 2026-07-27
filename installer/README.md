@@ -6,14 +6,48 @@ Windows and macOS.
 ## Prerequisites
 
 - The .NET 10 SDK selected by the repository `global.json`.
+- macOS, including the built-in `ditto`, `codesign`, and `shasum` tools, to
+  create the cross-platform team-sharing archives.
 - Inno Setup 6 or 7. The script searches `PATH` and the standard 32-bit and
-  64-bit installation folders, or accepts an explicit `-IsccPath`.
+  64-bit installation folders, or accepts an explicit `-IsccPath`. Inno Setup
+  is required only for the Windows setup executable.
 - The platform web view used by Avalonia (WebView2 on Windows and WKWebView on
   macOS) for embedded PDF display.
 - macOS 14 or newer for macOS builds, matching the supported .NET 10 runtime
   platforms.
 
-## Build
+## Package a release for team sharing
+
+From the repository root on macOS, pass the release version:
+
+```bash
+./installer/package-release.sh 1.2.0
+```
+
+The script tests the solution, cross-publishes self-contained macOS ARM64 and
+Windows x64 payloads, creates versioned ZIP archives, and writes a SHA-256
+checksum manifest under `installer/Output`. Existing artifacts are never
+overwritten.
+
+Override the architecture defaults when needed:
+
+```bash
+./installer/package-release.sh 1.2.0 osx-x64 win-arm64
+```
+
+Verify the finished archives before sharing them:
+
+```bash
+cd installer/Output
+shasum -a 256 -c NoteManager-1.2.0-SHA256SUMS.txt
+```
+
+The macOS archive is signed ad hoc by default. Set
+`NOTEMANAGER_CODESIGN_IDENTITY` to the name of an installed Developer ID
+Application certificate when a real signing identity is available. Public
+distribution also requires notarization.
+
+## Build platform installers
 
 ### Windows
 

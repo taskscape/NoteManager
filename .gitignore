@@ -10,3 +10,4 @@ installer/Output/
 *.user
 *.suo
 **/.DS_Store
+SampleNotes

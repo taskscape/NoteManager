@@ -39,7 +39,55 @@ dotnet test tests/NoteManager.App.Tests/NoteManager.App.Tests.csproj
 The former WPF/FlaUI suite remains under `tests/NoteManager.App.UiTests` as
 migration reference, but is not part of the cross-platform solution build.
 
-## Build the Windows installer
+## Package a release for team sharing
+
+Run the release packager from the repository root on macOS. Supply a new
+three- or four-part numeric version for every release:
+
+```bash
+./installer/package-release.sh 1.2.0
+```
+
+The script runs the Release test suite, publishes self-contained macOS ARM64
+and Windows x64 applications, signs the macOS application bundle, and creates:
+
+```text
+installer/Output/NoteManager-1.2.0-osx-arm64.zip
+installer/Output/NoteManager-1.2.0-win-x64.zip
+installer/Output/NoteManager-1.2.0-SHA256SUMS.txt
+```
+
+Teammates can extract the appropriate archive and run `NoteManager.app` on
+macOS or `NoteManager.exe` on Windows. They do not need to install .NET.
+
+For Intel macOS or Windows on ARM64, override the default runtime identifiers:
+
+```bash
+./installer/package-release.sh 1.2.0 osx-x64 win-arm64
+```
+
+The script refuses to overwrite an existing release. For every subsequent
+release, choose the next version, run the same command, and verify the artifacts
+before sharing them:
+
+```bash
+cd installer/Output
+shasum -a 256 -c NoteManager-1.2.0-SHA256SUMS.txt
+```
+
+By default, the macOS app receives an ad-hoc signature suitable for internal
+team sharing. A release engineer can apply an installed Developer ID
+certificate by setting `NOTEMANAGER_CODESIGN_IDENTITY`:
+
+```bash
+NOTEMANAGER_CODESIGN_IDENTITY="Developer ID Application: Example Company (TEAMID)" \
+  ./installer/package-release.sh 1.2.0
+```
+
+Public macOS distribution additionally requires Apple's notarization process,
+which is intentionally outside this internal packaging script.
+
+## Build platform installers
 
 Inno Setup 6 or 7 can package a self-contained Avalonia Release build:
 
@@ -54,8 +102,8 @@ installer\Output\NoteManager-1.0.0-win-x64-Setup.exe
 ```
 
 Pass `-Version 1.2.0` to version a release. See
-[`installer\README.md`](installer/README.md) for prerequisites, ARM64 builds, and
-unattended installation.
+[`installer\README.md`](installer/README.md) for prerequisites, ARM64 builds,
+team archives, and unattended installation.
 
 On macOS:
 
