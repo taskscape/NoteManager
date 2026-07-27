@@ -1,54 +1,53 @@
-# Design QA — contextual Markdown editor actions
+# Design QA — unified Markdown editor surface
 
 ## Comparison target
 
-- Source visual truth: `/Users/mzag/NoteManager/artifacts/modern-ui-option-1-final-pass.png`
-- User-directed change: move Tags above and Import PDF below the Markdown editor, align both to its right edge, and make both actions smaller and more contextual.
-- Final implementation: `/Users/mzag/NoteManager/artifacts/contextual-editor-actions-final.png`
-- Full-view comparison: `/Users/mzag/NoteManager/artifacts/contextual-editor-actions-comparison.png`
-- Focused editor comparison: `/Users/mzag/NoteManager/artifacts/contextual-editor-actions-focus.png`
+- Source visual truth: `/Users/mzag/NoteManager/artifacts/contextual-editor-actions-final.png`
+- User-directed change: remove the “MARKDOWN” label and contain Tags, the Markdown editor, and Import PDF within one expanded white surface.
+- Final implementation: `/Users/mzag/NoteManager/artifacts/unified-editor-surface.png`
+- Full-view comparison: `/Users/mzag/NoteManager/artifacts/unified-editor-surface-comparison.png`
+- Focused editor comparison: `/Users/mzag/NoteManager/artifacts/unified-editor-surface-focus.png`
 - State: macOS light theme, SampleNotes loaded, All notes and `untagged-note.md` selected, editor unfocused.
 
 ## Viewport and normalization
 
 - Source pixels: 1312 × 768.
 - Implementation pixels: 1312 × 768.
-- Native desktop capture; browser CSS viewport and `deviceScaleFactor` do not apply.
-- Both captures use the same window size, application state, theme, note, and density.
-- The 3040 × 1040 full comparison fits both undistorted captures into equal logical slots.
-- The 2200 × 1360 focused comparison uses matching, aspect-preserved editor-pane crops.
+- Native desktop capture; browser CSS size and `deviceScaleFactor` do not apply.
+- Both captures use the same application state, window size, content, theme, and density.
+- Full comparison: 3040 × 1040 Retina PNG with undistorted captures in equal slots.
+- Focused comparison: 2200 × 1360 Retina PNG with matching aspect-preserved editor-pane crops.
 
 ## Findings
 
 No actionable P0, P1, or P2 differences remain.
 
-- Typography: both contextual buttons use the existing Inter hierarchy at 12 px medium weight. They remain legible while staying subordinate to the editor title and document content.
-- Spacing and layout: Tags is directly above the editor and right-aligned with its edge. Import PDF is directly below the editor and shares the same right alignment. Both remain visible at the tested 768 px window height.
-- Colors and tokens: default controls use transparent backgrounds and secondary text, with the existing subtle surface and primary text applied on hover. Light/dark theme resources remain unchanged.
-- Asset fidelity: both buttons use 16 px Fluent UI System Icons. No handcrafted images, SVGs, emoji, or placeholder assets were introduced.
-- Copy and content: labels remain “Tags” and “Import PDF”; concise tooltips clarify that they affect the selected note.
-- Information architecture: removing both controls from the global command strip reduces scope ambiguity and correctly groups content operations with the Markdown editor.
-- Accessibility: visible text labels remain in addition to icons, tooltips describe intent, and existing disabled-state bindings are preserved.
+- Typography: the redundant uppercase “MARKDOWN” label is removed. Existing title, content, action-label, weight, wrapping, and line-height treatments remain unchanged.
+- Spacing and layout: one padded white surface now contains the top-right Tags action, the inset Markdown editor boundary, and the bottom-right Import PDF action. All controls remain visible at 1312 × 768.
+- Colors and tokens: the outer surface uses the existing panel background, border, and corner-radius tokens. The inner editor retains its white background and subtle boundary, creating a clear nested hierarchy without introducing a new color.
+- Asset fidelity: Tags and Import PDF continue using 16 px Fluent UI System Icons; no custom graphics or placeholder assets were added.
+- Copy and content: action labels and tooltips are unchanged; only the redundant section label was removed.
+- Interaction hierarchy: the expanded outer boundary makes the two actions read as utilities belonging to the editor rather than independent page actions.
+- Accessibility: both actions retain visible labels, tooltips, disabled states, and keyboard-focus behavior.
+
+## Focused evidence
+
+The focused comparison clearly shows the requested structural change: the former separate controls are now contained within one continuous white surface, while the Markdown editor retains an identifiable internal boundary. Right alignment and approximate vertical positions are preserved.
 
 ## Comparison history
 
-### Iteration 1
-
-- Finding: P2 — Import PDF was placed correctly but clipped below the fold at the common 1312 × 768 window size.
-- Fix: reduced the editor minimum height from 520 to 470 logical pixels, preserving a generous writing surface while keeping the contextual footer action visible.
-- Post-fix evidence: `/Users/mzag/NoteManager/artifacts/contextual-editor-actions-final.png` and `/Users/mzag/NoteManager/artifacts/contextual-editor-actions-comparison.png`.
+- First formal comparison passed. No P0, P1, or P2 fixes were required after the final implementation capture.
 
 ## Interaction checks
 
-- Tags opened the existing Assign Tags dialog and Cancel returned cleanly to the editor.
-- Import PDF opened the native PDF file picker and Cancel returned cleanly to the editor.
-- Existing File/Edit menu entries remain available.
+- Tags opened the existing Assign Tags dialog and Cancel returned cleanly to the unified editor.
+- Import PDF opened the native PDF picker and Cancel returned cleanly to the unified editor.
 - The application built with zero warnings or errors.
 - All 16 automated tests passed.
 
 ## Residual P3 / test gaps
 
-- Windows and dark-theme rendering were not visually captured in this macOS environment; the change uses only existing theme tokens and cross-platform Avalonia controls.
+- Windows and dark-theme rendering were not visually captured in this macOS environment; the implementation uses existing cross-platform controls and light/dark design tokens.
 
 ## Final result
 

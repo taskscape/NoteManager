@@ -47,7 +47,7 @@
             Background="{DynamicResource PanelBackgroundBrush}"
             BorderBrush="{DynamicResource BorderBrush}"
             BorderThickness="0,0,0,1">
-      <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto"
+      <Grid ColumnDefinitions="Auto,Auto,*,Auto"
             ColumnSpacing="2">
         <Button Classes="command"
                 Command="{Binding NewNoteCommand}">
@@ -61,11 +61,12 @@
           </StackPanel>
         </Button>
         <Button Grid.Column="1"
-                Classes="command"
-                Click="OpenFolder_OnClick">
+                Classes="command danger"
+                Click="Delete_OnClick"
+                IsEnabled="{Binding CanDeleteSelectedNote}">
           <StackPanel Orientation="Horizontal" Spacing="9">
-            <icons:FluentIcon Icon="FolderOpen" IconSize="Size20" />
-            <TextBlock VerticalAlignment="Center" Text="Open folder" />
+            <icons:FluentIcon Icon="Delete" IconSize="Size20" />
+            <TextBlock VerticalAlignment="Center" Text="Delete" />
           </StackPanel>
         </Button>
         <Border Grid.Column="2"
@@ -87,15 +88,6 @@
           <StackPanel Orientation="Horizontal" Spacing="9">
             <icons:FluentIcon Icon="Share" IconSize="Size20" />
             <TextBlock VerticalAlignment="Center" Text="Share" />
-          </StackPanel>
-        </Button>
-        <Button Grid.Column="4"
-                Classes="command danger"
-                Click="Delete_OnClick"
-                IsEnabled="{Binding CanDeleteSelectedNote}">
-          <StackPanel Orientation="Horizontal" Spacing="9">
-            <icons:FluentIcon Icon="Delete" IconSize="Size20" />
-            <TextBlock VerticalAlignment="Center" Text="Delete" />
           </StackPanel>
         </Button>
       </Grid>
@@ -275,50 +267,50 @@
               </ItemsControl>
 
               <StackPanel IsVisible="{Binding SelectedNote.IsMarkdownFile}">
-                <Grid Margin="2,0,0,7"
-                      ColumnDefinitions="*,Auto">
-                  <TextBlock VerticalAlignment="Center"
-                             Classes="section"
-                             Text="MARKDOWN" />
-                  <Button Grid.Column="1"
-                          Classes="editorAction"
-                          Click="Tags_OnClick"
-                          IsEnabled="{Binding CanAssignTags}"
-                          ToolTip.Tip="Assign tags to this note">
-                    <StackPanel Orientation="Horizontal" Spacing="6">
-                      <icons:FluentIcon Icon="Tag"
-                                        IconSize="Size16" />
-                      <TextBlock VerticalAlignment="Center"
-                                 Text="Tags" />
-                    </StackPanel>
-                  </Button>
-                </Grid>
-                <TextBox x:Name="MarkdownEditor"
-                         MinHeight="470"
-                         Padding="19,17"
-                         AcceptsReturn="True"
-                         Background="{DynamicResource PanelBackgroundBrush}"
-                         BorderBrush="{DynamicResource BorderBrush}"
-                         CornerRadius="8"
-                         FontFamily="avares://Avalonia.Fonts.Inter/Assets#Inter"
-                         FontSize="14"
-                         LineHeight="23"
-                         TextWrapping="Wrap"
-                         VerticalContentAlignment="Top"
-                         Text="{Binding SelectedNote.PlainTextContent, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
-                <Button Margin="0,6,0,0"
-                        HorizontalAlignment="Right"
-                        Classes="editorAction"
-                        Click="ImportPdf_OnClick"
-                        IsEnabled="{Binding CanDeleteSelectedNote}"
-                        ToolTip.Tip="Insert PDF references into this note">
-                  <StackPanel Orientation="Horizontal" Spacing="6">
-                    <icons:FluentIcon Icon="DocumentPdf"
-                                      IconSize="Size16" />
-                    <TextBlock VerticalAlignment="Center"
-                               Text="Import PDF" />
+                <Border Classes="surface"
+                        Padding="8,6">
+                  <StackPanel>
+                    <Button Margin="0,0,0,5"
+                            HorizontalAlignment="Right"
+                            Classes="editorAction"
+                            Click="Tags_OnClick"
+                            IsEnabled="{Binding CanAssignTags}"
+                            ToolTip.Tip="Assign tags to this note">
+                      <StackPanel Orientation="Horizontal" Spacing="6">
+                        <icons:FluentIcon Icon="Tag"
+                                          IconSize="Size16" />
+                        <TextBlock VerticalAlignment="Center"
+                                   Text="Tags" />
+                      </StackPanel>
+                    </Button>
+                    <TextBox x:Name="MarkdownEditor"
+                             MinHeight="430"
+                             Padding="19,17"
+                             AcceptsReturn="True"
+                             Background="{DynamicResource PanelBackgroundBrush}"
+                             BorderBrush="{DynamicResource BorderBrush}"
+                             CornerRadius="7"
+                             FontFamily="avares://Avalonia.Fonts.Inter/Assets#Inter"
+                             FontSize="14"
+                             LineHeight="23"
+                             TextWrapping="Wrap"
+                             VerticalContentAlignment="Top"
+                             Text="{Binding SelectedNote.PlainTextContent, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                    <Button Margin="0,5,0,0"
+                            HorizontalAlignment="Right"
+                            Classes="editorAction"
+                            Click="ImportPdf_OnClick"
+                            IsEnabled="{Binding CanDeleteSelectedNote}"
+                            ToolTip.Tip="Insert PDF references into this note">
+                      <StackPanel Orientation="Horizontal" Spacing="6">
+                        <icons:FluentIcon Icon="DocumentPdf"
+                                          IconSize="Size16" />
+                        <TextBlock VerticalAlignment="Center"
+                                   Text="Import PDF" />
+                      </StackPanel>
+                    </Button>
                   </StackPanel>
-                </Button>
+                </Border>
               </StackPanel>
 
               <StackPanel IsVisible="{Binding SelectedNote.IsMarkdownFile, Converter={StaticResource NotBool}}">
