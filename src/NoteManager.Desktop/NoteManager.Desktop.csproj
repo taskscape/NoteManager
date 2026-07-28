@@ -6,6 +6,7 @@
     <Nullable>enable</Nullable>
     <AssemblyName>NoteManager</AssemblyName>
     <RootNamespace>NoteManager.Desktop</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
     <AvaloniaUseCompiledBindingsByDefault>false</AvaloniaUseCompiledBindingsByDefault>
   </PropertyGroup>
 

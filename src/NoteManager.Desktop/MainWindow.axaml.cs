@@ -26,6 +26,7 @@ public partial class MainWindow : Window
         "last-folder.txt");
 
     private readonly ApplicationOptions _options;
+    private ShareDialog? _shareDialog;
     private UiAutomationServer? _automationServer;
     private bool _started;
     private bool _storagePickerOpen;
@@ -214,30 +215,29 @@ public partial class MainWindow : Window
         }
     }
 
-    private async void Publish_OnClick(object? sender, RoutedEventArgs e)
+    private async void Share_OnClick(object? sender, RoutedEventArgs e)
     {
+        await ShowShareDialogAsync();
+    }
+
+    private async Task ShowShareDialogAsync()
+    {
+        if (_shareDialog is not null || !ViewModel.CanPublishSelectedNote)
+        {
+            return;
+        }
+
+        var dialog = new ShareDialog(ViewModel);
+        _shareDialog = dialog;
         ViewModel.IsSharePanelOpen = true;
-        var publicUrl = await ViewModel.PublishSelectedNoteAsync();
-        if (publicUrl is null)
-        {
-            return;
-        }
-
-        var clipboard = TopLevel.GetTopLevel(this)?.Clipboard;
-        if (clipboard is null)
-        {
-            ViewModel.ReportClipboardFailure("The system clipboard is unavailable.");
-            return;
-        }
-
         try
         {
-            await clipboard.SetTextAsync(publicUrl);
-            ViewModel.ConfirmPublicLinkCopied(publicUrl);
+            await dialog.ShowDialog(this);
         }
-        catch (Exception exception)
+        finally
         {
-            ViewModel.ReportClipboardFailure(exception.Message);
+            _shareDialog = null;
+            ViewModel.IsSharePanelOpen = false;
         }
     }
 
@@ -348,7 +348,7 @@ public partial class MainWindow : Window
             cancellationToken => RunOnUiThreadAsync(
                 () =>
                 {
-                    ViewModel.IsSharePanelOpen = true;
+                    _ = ShowShareDialogAsync();
                     return Task.CompletedTask;
                 },
                 cancellationToken));
