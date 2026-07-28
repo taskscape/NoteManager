@@ -51,12 +51,12 @@ public static partial class MarkdownMetadataParser
         return tags.ToArray();
     }
 
-    public static string[] ParseInlinePdfEmbeds(string markdown)
+    public static string[] ParseInlineEmbeddedMediaEmbeds(string markdown)
     {
         var embeds = new List<string>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        foreach (Match match in InlinePdfEmbedRegex().Matches(markdown))
+        foreach (Match match in InlineEmbeddedMediaEmbedRegex().Matches(markdown))
         {
             var target = match.Groups["target"].Value.Trim();
             if (target.Length > 0 && seen.Add(target))
@@ -94,6 +94,6 @@ public static partial class MarkdownMetadataParser
     [GeneratedRegex(@"^[\t ]*-[\t ]+(?<tag>.+?)[\t ]*\r?$")]
     private static partial Regex TagItemRegex();
 
-    [GeneratedRegex(@"!\[\[\s*(?<target>[^\]\r\n|#]+?\.pdf)(?:[|#][^\]\r\n]*)?\s*\]\]", RegexOptions.IgnoreCase)]
-    private static partial Regex InlinePdfEmbedRegex();
+    [GeneratedRegex(@"!\[\[\s*(?<target>[^\]\r\n|#]+?\.(?:pdf|png|jpe?g|bmp))(?:[|#][^\]\r\n]*)?\s*\]\]", RegexOptions.IgnoreCase)]
+    private static partial Regex InlineEmbeddedMediaEmbedRegex();
 }

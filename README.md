@@ -123,7 +123,7 @@ Use `osx-x64` for Intel Macs.
 - Select a note to display its original Markdown source as plain, selectable text.
 - Edit Markdown directly; dirty notes are saved atomically when selecting another note or view, changing folders, publishing, or closing the application.
 - Drag one or more PDF files onto a note row or the Markdown editor to insert Obsidian `![[...]]` embeds. PDFs dropped from outside the open folder are copied to its root and receive `(1)`, `(2)`, and later suffixes when names collide.
-- View each Obsidian PDF transclusion in an interactive Edge PDF viewer below the Markdown source.
+- View each Obsidian PDF and PNG, JPG, JPEG, or BMP image transclusion beneath the Markdown source, in the same order as the embeds. Images are scaled to fit while preserving their aspect ratio.
 - Use the platform PDF viewer for scrolling, zooming, selection, printing, and
   saving, or click **Open PDF** to use the default desktop application. Viewer
   toolbar capabilities vary by operating system; PDF text-search parity is not
@@ -243,7 +243,7 @@ The complete boundary behavior is exercised against a disposable vault:
 .\tests\Test-AutoSave.ps1 -Configuration Debug
 ```
 
-## Markdown metadata and PDF embeds
+## Markdown metadata and embedded media
 
 Tags can appear anywhere in a Markdown file using a YAML-style block:
 
@@ -276,13 +276,14 @@ The native dialog and tag-block rewrite have a disposable-vault UI test:
 It verifies the recent/all repository lists, lowercase display, validation,
 multi-tag entry, tag removal, immediate file saving, and one-block merge.
 
-An inline Obsidian PDF transclusion uses:
+An inline Obsidian PDF or image transclusion uses:
 
 ```markdown
 ![[Documents/Report.pdf]]
+![[assets/Pasted image 20250727091803.png]]
 ```
 
-Multiple transclusions are supported in one note. PDF targets may be absolute, relative to the note, relative to the vault root, or filename-only; filename-only links are resolved against the vault index. Viewers initialize as they approach the visible area so notes containing many PDFs remain responsive.
+Multiple PDF and PNG, JPG, JPEG, or BMP transclusions are supported in one note and appear beneath the editor in Markdown order. Targets may be absolute, relative to the note, relative to the vault root, or filename-only; filename-only links are resolved against the vault media index. Changes typed into the editor refresh the previews shortly after typing stops.
 
 ## Sample documents
 

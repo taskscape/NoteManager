@@ -334,12 +334,11 @@
                 </ItemsControl>
               </StackPanel>
 
-              <ItemsControl ItemsSource="{Binding SelectedNote.PdfReferences}">
+              <ItemsControl ItemsSource="{Binding SelectedNote.EmbeddedMediaReferences}">
                 <ItemsControl.ItemTemplate>
                   <DataTemplate>
-                    <controls:PdfViewer Height="560"
-                                        Margin="0,0,0,12"
-                                        PdfPath="{Binding}" />
+                    <controls:EmbeddedMediaViewer Margin="0,0,0,12"
+                                                  Media="{Binding}" />
                   </DataTemplate>
                 </ItemsControl.ItemTemplate>
               </ItemsControl>

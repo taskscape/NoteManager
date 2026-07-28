@@ -15,6 +15,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private readonly RangeObservableCollection<NoteItem> _visibleNotes;
     private readonly InfostackerPublishingService _infostackerPublishingService;
     private CancellationTokenSource? _indexCancellation;
+    private CancellationTokenSource? _mediaRefreshCancellation;
     private CancellationTokenSource? _publishCancellation;
     private CancellationTokenSource? _searchCancellation;
     private HashSet<string>? _fullTextMatches;
@@ -33,6 +34,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private string _currentFolderPath = string.Empty;
     private string _searchIndexStatus = string.Empty;
     private string _shareStatusText = string.Empty;
+    private EmbeddedMediaVaultIndex? _mediaIndex;
     private long _folderGeneration;
 
     private const string AllNotesFilterKey = "*";
@@ -129,8 +131,11 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 }
             }
 
+            var previousNote = _selectedNote;
             if (SetProperty(ref _selectedNote, value))
             {
+                DetachSelectedNote(previousNote);
+                AttachSelectedNote(value);
                 OnPropertyChanged(nameof(CanDeleteSelectedNote));
                 OnPropertyChanged(nameof(CanPublishSelectedNote));
                 OnPropertyChanged(nameof(CanAssignTags));
@@ -493,8 +498,11 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 targetNote.PlainTextContent,
                 importedPdfs.Select(pdf => pdf.MarkdownEmbed),
                 insertionIndex);
-            targetNote.AddPdfReferences(
-                importedPdfs.Select(pdf => pdf.DestinationPath));
+            targetNote.AddEmbeddedMediaReferences(
+                importedPdfs.Select(pdf => new EmbeddedMediaReference(
+                    pdf.EmbedTarget,
+                    pdf.DestinationPath,
+                    EmbeddedMediaKind.Pdf)));
 
             if (!TrySaveSelectedNote())
             {
@@ -675,6 +683,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 note.SourceFilePath,
                 note.PlainTextContent);
             note.MarkSaved();
+            RefreshEmbeddedMediaReferences(note);
             SetStatus($"Saved {note.FileName}");
             if (updateSearchIndex)
             {
@@ -865,6 +874,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             SearchText = string.Empty;
             SelectedNavigationItem = null;
             SelectedNote = null;
+            _mediaIndex = result.MediaIndex;
             _allNotes.ReplaceRange(result.Notes);
 
             CurrentFolderPath = Path.GetFullPath(folderPath);
@@ -1052,6 +1062,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         _searchCancellation?.Cancel();
         _searchCancellation?.Dispose();
         _searchCancellation = null;
+        _mediaRefreshCancellation?.Cancel();
+        _mediaRefreshCancellation?.Dispose();
+        _mediaRefreshCancellation = null;
+        DetachSelectedNote(SelectedNote);
         CancelPublishing();
     }
 
@@ -1084,4 +1098,91 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     }
 
     private void SetStatus(string message) => StatusText = message;
+
+    private void AttachSelectedNote(NoteItem? note)
+    {
+        if (note is null)
+        {
+            return;
+        }
+
+        note.PropertyChanged += SelectedNote_OnPropertyChanged;
+        RefreshEmbeddedMediaReferences(note);
+    }
+
+    private void DetachSelectedNote(NoteItem? note)
+    {
+        if (note is not null)
+        {
+            note.PropertyChanged -= SelectedNote_OnPropertyChanged;
+        }
+    }
+
+    private void SelectedNote_OnPropertyChanged(
+        object? sender,
+        PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(NoteItem.PlainTextContent)
+            && sender is NoteItem note
+            && ReferenceEquals(note, SelectedNote))
+        {
+            QueueEmbeddedMediaRefresh(note);
+        }
+    }
+
+    private void QueueEmbeddedMediaRefresh(NoteItem note)
+    {
+        _mediaRefreshCancellation?.Cancel();
+        _mediaRefreshCancellation?.Dispose();
+        _mediaRefreshCancellation = null;
+
+        if (_mediaIndex is null || !CanResolveEmbeddedMediaFor(note))
+        {
+            return;
+        }
+
+        _mediaRefreshCancellation = new CancellationTokenSource();
+        var cancellationToken = _mediaRefreshCancellation.Token;
+        var generation = _folderGeneration;
+        _ = RefreshEmbeddedMediaReferencesAsync(note, generation, cancellationToken);
+    }
+
+    private async Task RefreshEmbeddedMediaReferencesAsync(
+        NoteItem note,
+        long generation,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await Task.Delay(180, cancellationToken);
+            if (cancellationToken.IsCancellationRequested
+                || generation != _folderGeneration
+                || !ReferenceEquals(note, SelectedNote))
+            {
+                return;
+            }
+
+            RefreshEmbeddedMediaReferences(note);
+        }
+        catch (OperationCanceledException)
+        {
+            // A newer edit, folder switch, or shutdown superseded this refresh.
+        }
+    }
+
+    private void RefreshEmbeddedMediaReferences(NoteItem note)
+    {
+        if (_mediaIndex is null || !CanResolveEmbeddedMediaFor(note))
+        {
+            return;
+        }
+
+        note.ReplaceEmbeddedMediaReferences(
+            _mediaIndex.ResolveAll(note.PlainTextContent, note.SourceFilePath));
+    }
+
+    private bool CanResolveEmbeddedMediaFor(NoteItem note)
+        => note.IsMarkdownFile
+           && IsFolderMode
+           && IsMarkdownPathInCurrentFolder(note.SourceFilePath);
 }

@@ -21,7 +21,7 @@ public sealed class NoteItem : ObservableObject
 {
     private string _title = string.Empty;
     private string _plainTextContent = string.Empty;
-    private string[] _pdfReferences = [];
+    private EmbeddedMediaReference[] _embeddedMediaReferences = [];
     private string[] _tags = [];
     private bool _isDirty;
 
@@ -101,28 +101,43 @@ public sealed class NoteItem : ObservableObject
         OnPropertyChanged(nameof(Tags));
     }
 
-    public string[] PdfReferences
+    public EmbeddedMediaReference[] EmbeddedMediaReferences
     {
-        get => _pdfReferences;
-        init => _pdfReferences = value ?? [];
+        get => _embeddedMediaReferences;
+        init => _embeddedMediaReferences = value ?? [];
     }
 
-    public void AddPdfReferences(IEnumerable<string> paths)
+    public void AddEmbeddedMediaReferences(
+        IEnumerable<EmbeddedMediaReference> references)
     {
-        var updatedReferences = _pdfReferences
-            .Concat(paths)
-            .Where(path => !string.IsNullOrWhiteSpace(path))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
+        ArgumentNullException.ThrowIfNull(references);
+
+        var updatedReferences = _embeddedMediaReferences
+            .Concat(references)
+            .Where(reference => !string.IsNullOrWhiteSpace(reference.ResolvedPath))
             .ToArray();
-        if (_pdfReferences.SequenceEqual(
-            updatedReferences,
-            StringComparer.OrdinalIgnoreCase))
+        if (_embeddedMediaReferences.SequenceEqual(updatedReferences))
         {
             return;
         }
 
-        _pdfReferences = updatedReferences;
-        OnPropertyChanged(nameof(PdfReferences));
+        _embeddedMediaReferences = updatedReferences;
+        OnPropertyChanged(nameof(EmbeddedMediaReferences));
+    }
+
+    public void ReplaceEmbeddedMediaReferences(
+        IEnumerable<EmbeddedMediaReference> references)
+    {
+        ArgumentNullException.ThrowIfNull(references);
+
+        var updatedReferences = references.ToArray();
+        if (_embeddedMediaReferences.SequenceEqual(updatedReferences))
+        {
+            return;
+        }
+
+        _embeddedMediaReferences = updatedReferences;
+        OnPropertyChanged(nameof(EmbeddedMediaReferences));
     }
 
     public bool IsWordDocument => string.Equals(Path.GetExtension(FileName), ".docx", StringComparison.OrdinalIgnoreCase);
