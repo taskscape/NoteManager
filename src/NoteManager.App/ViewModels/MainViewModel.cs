@@ -1212,7 +1212,11 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         {
             if (useDebounce)
             {
-                await Task.Delay(250, cancellationToken);
+                await Task.Delay(250);
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    return;
+                }
             }
 
             var result = await Task.Run(
@@ -1220,9 +1224,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                     folderPath,
                     query,
                     maxResults: int.MaxValue,
-                    cancellationToken),
-                cancellationToken);
+                    cancellationToken));
             if (cancellationToken.IsCancellationRequested
+                || result.IsCanceled
                 || folderGeneration != _folderGeneration
                 || searchGeneration != _searchGeneration
                 || !SearchText.Trim().Equals(

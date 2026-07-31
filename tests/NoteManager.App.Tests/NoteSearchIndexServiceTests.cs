@@ -55,6 +55,29 @@ public sealed class NoteSearchIndexServiceTests
     }
 
     [Fact]
+    public void Search_WhenAlreadyCancelled_ReturnsCanceledResultWithoutThrowing()
+    {
+        using var folder = new SearchTestFolder();
+        folder.WriteNote(
+            "Cancelled.md",
+            "search cancellation fixture",
+            modifiedDaysAgo: 0);
+        folder.UpdateIndex();
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        var result = NoteSearchIndexService.Search(
+            folder.Path,
+            "cancellation",
+            maxResults: 100,
+            cancellation.Token);
+
+        Assert.True(result.IsCanceled);
+        Assert.True(result.IsAvailable);
+        Assert.Empty(result.Hits);
+    }
+
+    [Fact]
     public void Search_StrictMode_RequiresEveryTermAndOrdersByModificationTime()
     {
         using var folder = new SearchTestFolder();

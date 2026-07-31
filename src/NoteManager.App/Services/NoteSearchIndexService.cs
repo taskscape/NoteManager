@@ -29,7 +29,8 @@ public sealed record NoteSearchQueryResult(
     IReadOnlyList<NoteSearchHit> Hits,
     NoteSearchMode Mode,
     bool IsAvailable,
-    string? Error = null);
+    string? Error = null,
+    bool IsCanceled = false);
 
 public static class NoteSearchIndexService
 {
@@ -263,6 +264,11 @@ public static class NoteSearchIndexService
         {
             using var connection = OpenConnection(databasePath, readOnly: true);
             var documents = ReadSearchDocuments(connection, cancellationToken);
+            if (documents is null)
+            {
+                return CanceledSearchResult(query.Mode);
+            }
+
             var terms = NoteSearchQueryParser
                 .EnumerateTerms(query.Root)
                 .Concat(query.RequiredExpressions.SelectMany(
@@ -275,13 +281,23 @@ public static class NoteSearchIndexService
                 new Dictionary<NoteSearchTerm, IReadOnlyDictionary<string, TermMatch>>();
             foreach (var term in terms)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                termMatches[term] = term.IsMatchAll
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    return CanceledSearchResult(query.Mode);
+                }
+
+                var matches = term.IsMatchAll
                     ? documents.Values.ToDictionary(
                         document => document.Path,
                         _ => new TermMatch(0),
                         StringComparer.OrdinalIgnoreCase)
                     : SearchTerm(connection, term, cancellationToken);
+                if (matches is null)
+                {
+                    return CanceledSearchResult(query.Mode);
+                }
+
+                termMatches[term] = matches;
             }
 
             var positiveTerms = NoteSearchQueryParser
@@ -297,7 +313,11 @@ public static class NoteSearchIndexService
             var hits = new List<NoteSearchHit>();
             foreach (var document in documents.Values)
             {
-                cancellationToken.ThrowIfCancellationRequested();
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    return CanceledSearchResult(query.Mode);
+                }
+
                 if (!Evaluate(query.Root!, document.Path, termMatches)
                     || query.RequiredExpressions.Any(required =>
                         !Evaluate(required, document.Path, termMatches))
@@ -355,6 +375,13 @@ public static class NoteSearchIndexService
                 IsAvailable: false);
         }
     }
+
+    private static NoteSearchQueryResult CanceledSearchResult(NoteSearchMode mode)
+        => new(
+            [],
+            mode,
+            IsAvailable: true,
+            IsCanceled: true);
 
     private static MarkdownFileSnapshot[] EnumerateMarkdownFiles(
         string rootFolder,
@@ -675,7 +702,7 @@ public static class NoteSearchIndexService
         literalCommand.ExecuteNonQuery();
     }
 
-    private static Dictionary<string, SearchDocument> ReadSearchDocuments(
+    private static Dictionary<string, SearchDocument>? ReadSearchDocuments(
         SqliteConnection connection,
         CancellationToken cancellationToken)
     {
@@ -692,7 +719,11 @@ public static class NoteSearchIndexService
         using var reader = command.ExecuteReader();
         while (reader.Read())
         {
-            cancellationToken.ThrowIfCancellationRequested();
+            if (cancellationToken.IsCancellationRequested)
+            {
+                return null;
+            }
+
             var document = new SearchDocument(
                 reader.GetString(0),
                 reader.GetString(1),
@@ -704,7 +735,7 @@ public static class NoteSearchIndexService
         return documents;
     }
 
-    private static IReadOnlyDictionary<string, TermMatch> SearchTerm(
+    private static IReadOnlyDictionary<string, TermMatch>? SearchTerm(
         SqliteConnection connection,
         NoteSearchTerm term,
         CancellationToken cancellationToken)
@@ -712,7 +743,7 @@ public static class NoteSearchIndexService
             ? SearchWordTerm(connection, term, cancellationToken)
             : SearchLiteralTerm(connection, term, cancellationToken);
 
-    private static IReadOnlyDictionary<string, TermMatch> SearchWordTerm(
+    private static IReadOnlyDictionary<string, TermMatch>? SearchWordTerm(
         SqliteConnection connection,
         NoteSearchTerm term,
         CancellationToken cancellationToken)
@@ -740,7 +771,11 @@ public static class NoteSearchIndexService
         using var reader = command.ExecuteReader();
         while (reader.Read())
         {
-            cancellationToken.ThrowIfCancellationRequested();
+            if (cancellationToken.IsCancellationRequested)
+            {
+                return null;
+            }
+
             var score = ScoreWordMatch(reader, term);
             score += Math.Max(0, -reader.GetDouble(5));
             matches[reader.GetString(0)] = new TermMatch(score);
@@ -749,7 +784,7 @@ public static class NoteSearchIndexService
         return matches;
     }
 
-    private static IReadOnlyDictionary<string, TermMatch> SearchLiteralTerm(
+    private static IReadOnlyDictionary<string, TermMatch>? SearchLiteralTerm(
         SqliteConnection connection,
         NoteSearchTerm term,
         CancellationToken cancellationToken)
@@ -777,7 +812,11 @@ public static class NoteSearchIndexService
         using var reader = command.ExecuteReader();
         while (reader.Read())
         {
-            cancellationToken.ThrowIfCancellationRequested();
+            if (cancellationToken.IsCancellationRequested)
+            {
+                return null;
+            }
+
             var score = ScoreLiteralMatch(reader, term);
             if (score > 0)
             {
