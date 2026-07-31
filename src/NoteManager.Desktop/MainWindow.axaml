@@ -113,13 +113,16 @@
                   Command="{Binding ClearTagFilterCommand}">
             <TextBlock VerticalAlignment="Center" Text="Show all notes" />
           </Button>
-          <ListBox Grid.Row="2"
+          <ListBox x:Name="NavigationList"
+                   Grid.Row="2"
+                   AutomationProperties.AutomationId="NavigationList"
                    Classes="rail"
                    ItemsSource="{Binding NavigationItems}"
                    SelectedItem="{Binding SelectedNavigationItem, Mode=TwoWay}">
             <ListBox.ItemTemplate>
               <DataTemplate>
-                <Grid ColumnDefinitions="*,Auto">
+                <Grid AutomationProperties.Name="{Binding Label}"
+                      ColumnDefinitions="*,Auto">
                   <TextBlock Text="{Binding Label}"
                              TextTrimming="CharacterEllipsis" />
                   <TextBlock Grid.Column="1"
@@ -143,22 +146,82 @@
         <Grid Margin="18,22,14,16"
               RowDefinitions="Auto,Auto,*">
           <Grid Margin="6,0,6,12"
-                ColumnDefinitions="*,Auto">
+                ColumnDefinitions="*,Auto,Auto">
             <TextBlock FontSize="22"
                        FontWeight="SemiBold"
                        Text="{Binding CenterHeading}" />
-            <TextBlock Grid.Column="1"
+            <TextBlock x:Name="VisibleNoteCountText"
+                       Grid.Column="1"
                        VerticalAlignment="Center"
+                       AutomationProperties.AutomationId="VisibleNoteCountText"
                        Classes="secondary"
                        Text="{Binding VisibleNoteCount}" />
+            <Button x:Name="SortNotesButton"
+                    Grid.Column="2"
+                    Margin="4,0,0,0"
+                    VerticalAlignment="Center"
+                    AutomationProperties.AutomationId="SortNotesButton"
+                    Classes="command icon"
+                    IsEnabled="{Binding CanSortNotes}"
+                    ToolTip.Tip="{Binding SortNotesToolTip}">
+              <Viewbox Width="20" Height="20">
+                <Canvas Width="24" Height="24">
+                  <Path Data="M5,3 L5,20 M1.5,16.5 L5,20 L8.5,16.5 M12,5 L22,5 M12,10 L19,10 M12,15 L16,15"
+                        Stroke="{DynamicResource TextSecondaryBrush}"
+                        StrokeLineCap="Round"
+                        StrokeThickness="1.6" />
+                </Canvas>
+              </Viewbox>
+              <Button.Flyout>
+                <MenuFlyout Placement="BottomEdgeAlignedRight">
+                  <MenuItem Header="Title"
+                            Command="{Binding SortNotesCommand}"
+                            CommandParameter="Title">
+                    <MenuItem.Icon>
+                      <TextBlock IsVisible="{Binding IsSortByTitle}"
+                                 Text="✓" />
+                    </MenuItem.Icon>
+                  </MenuItem>
+                  <MenuItem Header="Created"
+                            Command="{Binding SortNotesCommand}"
+                            CommandParameter="Created">
+                    <MenuItem.Icon>
+                      <TextBlock IsVisible="{Binding IsSortByCreated}"
+                                 Text="✓" />
+                    </MenuItem.Icon>
+                  </MenuItem>
+                  <MenuItem Header="Updated"
+                            Command="{Binding SortNotesCommand}"
+                            CommandParameter="Updated">
+                    <MenuItem.Icon>
+                      <TextBlock IsVisible="{Binding IsSortByUpdated}"
+                                 Text="✓" />
+                    </MenuItem.Icon>
+                  </MenuItem>
+                  <MenuItem Header="Size"
+                            Command="{Binding SortNotesCommand}"
+                            CommandParameter="Size">
+                    <MenuItem.Icon>
+                      <TextBlock IsVisible="{Binding IsSortBySize}"
+                                 Text="✓" />
+                    </MenuItem.Icon>
+                  </MenuItem>
+                </MenuFlyout>
+              </Button.Flyout>
+            </Button>
           </Grid>
 
           <Grid Grid.Row="1"
                 Margin="0,0,0,12">
             <TextBox x:Name="SearchBox"
                      Padding="38,8,54,8"
-                     PlaceholderText="Search notes"
-                     Text="{Binding SearchText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                     AutomationProperties.AutomationId="SearchBox"
+                     AutomationProperties.Name="{Binding SearchPlaceholderText}"
+                     IsEnabled="{Binding IsSearchAvailable}"
+                     KeyDown="SearchBox_OnKeyDown"
+                     PlaceholderText="{Binding SearchPlaceholderText}"
+                     Text="{Binding SearchText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                     ToolTip.Tip="Use &quot;phrases&quot;, OR, -exclude, name:, tag:, path:, or body:. Prefix with ~ for best match." />
             <icons:FluentIcon Margin="13,0,0,0"
                               HorizontalAlignment="Left"
                               VerticalAlignment="Center"
@@ -172,43 +235,64 @@
                        IsHitTestVisible="False"
                        Classes="tertiary"
                        FontSize="11"
+                       IsVisible="{Binding IsSearchAvailable}"
                        Text="Ctrl/⌘ F" />
           </Grid>
 
-          <ListBox x:Name="NotesList"
-                   Grid.Row="2"
-                   Classes="notes"
-                   ItemsSource="{Binding NotesView}"
-                   SelectedItem="{Binding SelectedNote, Mode=TwoWay}">
-            <ListBox.ItemTemplate>
-              <DataTemplate>
-                <Border Padding="0,0,0,14"
-                        BorderBrush="{DynamicResource BorderBrush}"
-                        BorderThickness="0,0,0,1">
-                  <StackPanel Spacing="5">
-                    <TextBlock FontSize="15"
-                               FontWeight="SemiBold"
-                               Text="{Binding Title}"
-                               TextTrimming="CharacterEllipsis" />
-                    <TextBlock Classes="secondary"
-                               FontSize="12"
-                               Text="{Binding Subtitle}"
-                               TextTrimming="CharacterEllipsis" />
-                    <Grid Margin="0,3,0,0"
-                          ColumnDefinitions="*,Auto">
-                      <TextBlock Classes="tertiary"
-                                 FontSize="11"
-                                 Text="{Binding ModifiedAt}" />
-                      <TextBlock Grid.Column="1"
-                                 Classes="tertiary"
-                                 FontSize="11"
-                                 Text="{Binding Size}" />
-                    </Grid>
-                  </StackPanel>
-                </Border>
-              </DataTemplate>
-            </ListBox.ItemTemplate>
-          </ListBox>
+          <Grid Grid.Row="2">
+            <ListBox x:Name="NotesList"
+                     AutomationProperties.AutomationId="NotesList"
+                     Classes="notes"
+                     ItemsSource="{Binding NotesView}"
+                     SelectedItem="{Binding SelectedNote, Mode=TwoWay}">
+              <ListBox.ItemTemplate>
+                <DataTemplate>
+                  <Border Padding="0,0,0,14"
+                          AutomationProperties.Name="{Binding Title}"
+                          BorderBrush="{DynamicResource BorderBrush}"
+                          BorderThickness="0,0,0,1">
+                    <StackPanel Spacing="5">
+                      <TextBlock FontSize="15"
+                                 FontWeight="SemiBold"
+                                 Text="{Binding Title}"
+                                 TextTrimming="CharacterEllipsis" />
+                      <TextBlock Classes="secondary"
+                                 FontSize="12"
+                                 Text="{Binding Subtitle}"
+                                 TextTrimming="CharacterEllipsis" />
+                      <Grid Margin="0,3,0,0"
+                            ColumnDefinitions="*,Auto">
+                        <TextBlock Classes="tertiary"
+                                   FontSize="11"
+                                   Text="{Binding ModifiedAt}" />
+                        <TextBlock Grid.Column="1"
+                                   Classes="tertiary"
+                                   FontSize="11"
+                                   Text="{Binding Size}" />
+                      </Grid>
+                    </StackPanel>
+                  </Border>
+                </DataTemplate>
+              </ListBox.ItemTemplate>
+            </ListBox>
+
+            <Border AutomationProperties.AutomationId="NoSearchResultsPanel"
+                    Background="{DynamicResource PanelBackgroundBrush}"
+                    IsVisible="{Binding HasNoSearchResults}">
+              <StackPanel HorizontalAlignment="Center"
+                          VerticalAlignment="Center"
+                          Spacing="6">
+                <TextBlock AutomationProperties.AutomationId="NoSearchResultsText"
+                           HorizontalAlignment="Center"
+                           FontSize="17"
+                           FontWeight="SemiBold"
+                           Text="No notes found" />
+                <TextBlock HorizontalAlignment="Center"
+                           Classes="secondary"
+                           Text="Try another search expression or clear the search box." />
+              </StackPanel>
+            </Border>
+          </Grid>
         </Grid>
       </Border>
 
@@ -222,8 +306,10 @@
           <Grid Margin="2,0,2,0"
                 ColumnDefinitions="*,Auto">
             <StackPanel>
-              <TextBlock FontSize="25"
+              <TextBlock x:Name="SelectedNoteTitle"
+                         FontSize="25"
                          FontWeight="SemiBold"
+                         AutomationProperties.AutomationId="SelectedNoteTitle"
                          Text="{Binding SelectedNote.Title}"
                          TextWrapping="Wrap" />
               <TextBlock Margin="0,5,0,0"
@@ -361,11 +447,15 @@
                           IconSize="Size16"
                           Foreground="{DynamicResource SuccessBrush}" />
         <TextBlock Grid.Column="1"
+                   x:Name="StatusText"
                    VerticalAlignment="Center"
+                   AutomationProperties.AutomationId="StatusText"
                    FontSize="11"
                    Text="{Binding StatusText}" />
         <TextBlock Grid.Column="2"
+                   x:Name="SearchIndexStatusText"
                    VerticalAlignment="Center"
+                   AutomationProperties.AutomationId="SearchIndexStatusText"
                    Classes="secondary"
                    FontSize="11"
                    Text="{Binding SearchIndexStatus}" />

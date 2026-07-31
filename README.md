@@ -36,8 +36,21 @@ The portable service and view-model suite runs on both operating systems:
 dotnet test tests/NoteManager.App.Tests/NoteManager.App.Tests.csproj
 ```
 
-The former WPF/FlaUI suite remains under `tests/NoteManager.App.UiTests` as
-migration reference, but is not part of the cross-platform solution build.
+On Windows, the executable-level search suite launches the current Avalonia
+application and drives the real search box through UI Automation:
+
+```powershell
+.\tests\Run-UiTests.ps1 -Configuration Debug
+```
+
+It requires an unlocked interactive Windows session. The project remains
+outside the cross-platform solution because FlaUI/UIA3 is Windows-specific.
+See
+[`tests/NoteManager.Desktop.UiTests/README.md`](tests/NoteManager.Desktop.UiTests/README.md)
+for its user-visible search scenarios and failure artifacts.
+
+The former WPF/FlaUI suite remains under `tests/NoteManager.App.UiTests` only as
+migration reference.
 
 ## Package a release for team sharing
 
@@ -119,7 +132,7 @@ Use `osx-x64` for Intel Macs.
 - Browse an alphabetized tag rail whose counts are calculated from the loaded Markdown files.
 - Select a tag to filter the middle pane by exact tag membership.
 - Use the virtual **All notes** and **Untagged** tags to show the complete vault or notes without tags.
-- Type in **Search notes** (or press `Ctrl+F`) to search titles, file names, tags, paths, and complete Markdown contents.
+- Type in **Search notes** (or press `Ctrl+F`) to search note file names, tags, relative paths, and complete Markdown contents using strict or best-match expressions described below.
 - Select a note to display its original Markdown source as plain, selectable text.
 - Edit Markdown directly; dirty notes are saved atomically when selecting another note or view, changing folders, publishing, or closing the application.
 - Drag one or more PDF files onto a note row or the Markdown editor to insert Obsidian `![[...]]` embeds. PDFs dropped from outside the open folder are copied to its root and receive `(1)`, `(2)`, and later suffixes when names collide.
@@ -147,6 +160,161 @@ Opening a folder immediately loads the note and tag metadata, then updates a SQL
 The update runs on every startup and whenever **File → Open folder…** is used. Unchanged files are retained, changed or new Markdown files are reindexed, and deleted files are removed. Progress appears beside the note count. Searches are debounced while typing and begin returning results from completed batches even while a large first-time index is still being built.
 
 The database uses SQLite write-ahead logging so searches can read committed batches while indexing continues. Delete the selected folder's `.notes` directory at any time to force a complete rebuild; it contains no source notes and is excluded by the repository `.gitignore`.
+
+### How search works
+
+The index stores the file name, path relative to the opened folder, parsed
+tags, and complete Markdown source for every note. A Unicode FTS5 index handles
+word and prefix searches. A second punctuation-preserving trigram index
+handles phrases, paths, email addresses, versions, and other literal text.
+Matching is case-insensitive and diacritic-insensitive, so `café` can match
+`cafe`.
+
+NoteManager waits 250 milliseconds after the latest keystroke before searching,
+or you can press `Enter` to run the current expression immediately. A later
+keystroke, folder change, or shutdown cancels the older query. The last
+completed result remains visible while a new valid expression is running.
+Malformed expressions are not executed and produce a readable status message.
+A valid search with no matches clears the note list and displays **No notes
+found**. While the full-text index is being built, the search box is disabled
+and displays **Indexing in progress**. It becomes available when the status bar
+reports **Full-text ready**.
+
+The selected tag, **All notes**, or **Untagged** navigation filter remains in
+effect. Text search therefore searches within the current navigation scope,
+not outside it.
+
+#### Search modes
+
+An unqualified query is a strict search. Strict mode requires every adjacent
+term and shows the most recently modified matching note first:
+
+```text
+project plan
+all: project plan
+= project plan
+```
+
+`all:` and `=` are equivalent explicit strict-mode selectors.
+
+Best-match mode is selected with `best:` or `~`. Adjacent terms become
+alternatives, and notes matching the most distinct terms and strongest fields
+are displayed first:
+
+```text
+best: project plan
+~ project plan
+```
+
+Best match normally returns notes matching at least one positive term. Add `*`
+to include every note in the current navigation scope and place zero-score
+notes after relevant notes:
+
+```text
+~ * project plan
+```
+
+#### Terms, phrases, and operators
+
+Letter, number, and underscore terms are prefix searches. `plan` therefore
+matches `plan`, `plans`, and `planning`, with an exact word ranked above a
+prefix-only match.
+
+Text enclosed in double quotes is one contiguous phrase:
+
+```text
+"quarterly project plan"
+```
+
+Use two double quotes for a quote inside a phrase:
+
+```text
+"the ""approved"" plan"
+```
+
+The supported operators are:
+
+| Operator | Meaning |
+| --- | --- |
+| `AND` | Both operands must match |
+| `OR` | At least one operand must match |
+| `NOT` | Exclude the following operand |
+| `+term` | Require the following term or group |
+| `-term` | Short form of `NOT term` |
+| `( ... )` | Group an expression |
+| `*` | Include the complete current scope |
+
+Explicit operators have the same meaning in both search modes. Operator words
+are case-insensitive and are recognized only as complete, unquoted words.
+`NOT` and `-` exclusions apply to the complete expression.
+
+Examples:
+
+```text
+(invoice OR receipt) NOT draft
+~ +invoice paid -archived
+all: "project plan" AND approved
+```
+
+`NOT`, then `AND`, then `OR` is the operator precedence. Parentheses should be
+used whenever the intended grouping would otherwise be unclear.
+
+#### Search specific fields
+
+Prefix a term or phrase with a field operator to limit where it can match:
+
+| Field operator | Searches |
+| --- | --- |
+| `name:` | Note file name |
+| `tag:` | Parsed note tags |
+| `path:` | Path relative to the opened folder |
+| `body:` | Markdown source |
+
+Examples:
+
+```text
+name:"project plan"
+tag:active body:roadmap
+path:Clients/Acme
+~ +tag:active body:roadmap -path:archive/
+```
+
+`title:` is accepted as an alias for `name:`. Only these known field names are
+operators; other colon-containing text remains an ordinary search term.
+
+#### Literal symbols and paths
+
+A bare term containing punctuation is matched as a literal substring.
+Forward slash and backslash are ordinary searchable characters, not operators
+or escape characters:
+
+```text
+docs/search.md
+C:\Projects\NoteManager
+customer@example.com
+release-1.2
+```
+
+The slash direction is significant. On Windows, a relative path normally uses
+backslashes, while a forward-slash path can still match text in a note body.
+Quote literal text when it contains spaces.
+
+#### Relevance and note sorting
+
+Best-match scoring favors file-name matches, followed by tags, relative paths,
+and Markdown content. Matching more distinct positive terms provides the
+largest coverage advantage; phrases, exact words, and repeated occurrences
+provide additional ranking signals. Modification time is used only to break
+relevance ties.
+
+When a valid search result is accepted, the normal Title, Created, Updated,
+and Size sort selections are cleared and the sort button is disabled because
+the search mode controls ordering. Strict search uses modification time
+descending. Best match uses relevance descending. Clearing the search box
+restores the vault's saved normal sort selection and check mark.
+
+The complete grammar, ordering rules, implementation design, and acceptance
+criteria are documented in [`search.md`](search.md).
 
 ## Planned background Git synchronization
 
@@ -309,7 +477,8 @@ src/NoteManager.App/
   Legacy WPF UI retained as migration reference; not in the portable solution
 tests/
   NoteManager.App.Tests/     portable parser, editor, index, PDF, and view-model tests
-  NoteManager.App.UiTests/   legacy Windows-only FlaUI regression reference
+  NoteManager.Desktop.UiTests/ current Windows Avalonia search UI tests
+  NoteManager.App.UiTests/     legacy WPF FlaUI regression reference
 ```
 
 Visual comparison evidence and the final design review are documented in `design-qa.md`.

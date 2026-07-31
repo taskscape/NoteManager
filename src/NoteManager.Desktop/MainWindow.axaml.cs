@@ -243,6 +243,18 @@ public partial class MainWindow : Window
 
     private void Find_OnClick(object? sender, RoutedEventArgs e) => FocusSearch();
 
+    private void SearchBox_OnKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter || !ViewModel.IsSearchAvailable)
+        {
+            return;
+        }
+
+        ViewModel.SearchText = SearchBox.Text ?? string.Empty;
+        ViewModel.SubmitSearch();
+        e.Handled = true;
+    }
+
     private void FocusSearch()
     {
         SearchBox.Focus();

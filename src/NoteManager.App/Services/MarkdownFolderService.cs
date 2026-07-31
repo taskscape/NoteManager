@@ -98,6 +98,9 @@ public static class MarkdownFolderService
             DocumentSubheading = relativePath,
             Paragraphs = [],
             Tags = tags,
+            CreatedAt = file.CreationTimeUtc,
+            UpdatedAt = file.LastWriteTimeUtc,
+            SizeBytes = file.Length,
             AttachmentDescription = mediaReferences.Length switch
             {
                 0 => "Markdown note",
@@ -115,7 +118,7 @@ public static class MarkdownFolderService
         };
     }
 
-    private static string FormatFileSize(long bytes)
+    public static string FormatFileSize(long bytes)
     {
         if (bytes < 1024)
         {
