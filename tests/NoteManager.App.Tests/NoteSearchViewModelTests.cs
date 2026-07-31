@@ -55,6 +55,48 @@ public sealed class NoteSearchViewModelTests
     }
 
     [Fact]
+    public async Task SubmittedSearch_TemporarilyDisablesTheSearchInput()
+    {
+        var folderPath = Directory.CreateDirectory(
+            Path.Combine(
+                Path.GetTempPath(),
+                $"NoteManager.SearchBusyTests.{Guid.NewGuid():N}")).FullName;
+        for (var index = 0; index < 2_000; index++)
+        {
+            File.WriteAllText(
+                Path.Combine(folderPath, $"Search fixture {index:D4}.md"),
+                $"search busy fixture {index}");
+        }
+
+        using var viewModel = new MainViewModel();
+        try
+        {
+            await viewModel.LoadMarkdownFolderAsync(folderPath);
+            await WaitForIndexAsync(viewModel);
+
+            viewModel.SearchText = "search busy fixture";
+            viewModel.SubmitSearch();
+
+            Assert.True(viewModel.IsSearching);
+            Assert.False(viewModel.IsSearchInputEnabled);
+
+            await WaitForSearchToFinishAsync(viewModel);
+
+            Assert.False(viewModel.IsSearching);
+            Assert.True(viewModel.IsSearchInputEnabled);
+        }
+        finally
+        {
+            viewModel.Dispose();
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(folderPath))
+            {
+                Directory.Delete(folderPath, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public async Task SearchResultsRemainInsideTheSelectedTagScope()
     {
         var folderPath = Directory.CreateDirectory(
@@ -131,5 +173,16 @@ public sealed class NoteSearchViewModelTests
         }
 
         Assert.True(viewModel.IsSearchActive);
+    }
+
+    private static async Task WaitForSearchToFinishAsync(MainViewModel viewModel)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (viewModel.IsSearching && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(25);
+        }
+
+        Assert.False(viewModel.IsSearching);
     }
 }

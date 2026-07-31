@@ -217,7 +217,7 @@
                      Padding="38,8,54,8"
                      AutomationProperties.AutomationId="SearchBox"
                      AutomationProperties.Name="{Binding SearchPlaceholderText}"
-                     IsEnabled="{Binding IsSearchAvailable}"
+                     IsEnabled="{Binding IsSearchInputEnabled}"
                      KeyDown="SearchBox_OnKeyDown"
                      PlaceholderText="{Binding SearchPlaceholderText}"
                      Text="{Binding SearchText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
@@ -235,8 +235,17 @@
                        IsHitTestVisible="False"
                        Classes="tertiary"
                        FontSize="11"
-                       IsVisible="{Binding IsSearchAvailable}"
+                       IsVisible="{Binding IsSearchInputEnabled}"
                        Text="Ctrl/⌘ F" />
+            <ProgressBar Width="30"
+                         Height="3"
+                         Margin="0,0,12,0"
+                         HorizontalAlignment="Right"
+                         VerticalAlignment="Center"
+                         AutomationProperties.AutomationId="SearchProgress"
+                         AutomationProperties.Name="Searching notes"
+                         IsIndeterminate="True"
+                         IsVisible="{Binding IsSearching}" />
           </Grid>
 
           <Grid Grid.Row="2">

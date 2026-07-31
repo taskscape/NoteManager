@@ -30,6 +30,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private bool _isIndexing;
     private bool _isPublishing;
     private bool _isSearchIndexAvailable;
+    private bool _isSearching;
     private string _statusText = string.Empty;
     private string _centerHeading = "All notes";
     private string _currentFolderPath = string.Empty;
@@ -114,6 +115,18 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public bool HasNoSearchResults => IsSearchActive && NotesView.Count == 0;
     public bool IsSearchAvailable
         => IsFolderMode && _isSearchIndexAvailable && !IsIndexing;
+    public bool IsSearching
+    {
+        get => _isSearching;
+        private set
+        {
+            if (SetProperty(ref _isSearching, value))
+            {
+                OnPropertyChanged(nameof(IsSearchInputEnabled));
+            }
+        }
+    }
+    public bool IsSearchInputEnabled => IsSearchAvailable && !IsSearching;
     public string SearchPlaceholderText
         => IsIndexing
             ? "Indexing in progress"
@@ -1219,6 +1232,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 }
             }
 
+            IsSearching = true;
             var result = await Task.Run(
                 () => NoteSearchIndexService.Search(
                     folderPath,
@@ -1258,6 +1272,13 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         {
             // A later keystroke, folder switch, or shutdown superseded this query.
         }
+        finally
+        {
+            if (searchGeneration == _searchGeneration)
+            {
+                IsSearching = false;
+            }
+        }
     }
 
     private void CancelQueuedSearch()
@@ -1266,6 +1287,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         _searchCancellation?.Dispose();
         _searchCancellation = null;
         _searchGeneration++;
+        IsSearching = false;
     }
 
     private void ClearActiveSearch(bool refreshNotes)
@@ -1317,6 +1339,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private void NotifySearchAvailabilityChanged()
     {
         OnPropertyChanged(nameof(IsSearchAvailable));
+        OnPropertyChanged(nameof(IsSearchInputEnabled));
         OnPropertyChanged(nameof(SearchPlaceholderText));
     }
 
