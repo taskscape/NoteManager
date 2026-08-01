@@ -114,6 +114,23 @@ internal sealed class NoteManagerAppSession : IDisposable
     public void WaitForSelectedTitle(string expectedTitle)
         => WaitForElementText("SelectedNoteTitle", expectedTitle);
 
+    public void RenameSelectedNoteAndPressEnter(string fileName)
+    {
+        WaitForByAutomationId("SelectedNoteTitle").AsButton().Invoke();
+        var editor = WaitForByAutomationId("SelectedNoteTitleEditor").AsTextBox();
+        editor.Text = fileName;
+        editor.Focus();
+        Keyboard.Press(VirtualKeyShort.RETURN);
+    }
+
+    public void RenameSelectedNoteAndLeaveEditor(string fileName)
+    {
+        WaitForByAutomationId("SelectedNoteTitle").AsButton().Invoke();
+        var editor = WaitForByAutomationId("SelectedNoteTitleEditor").AsTextBox();
+        editor.Text = fileName;
+        WaitForByAutomationId("SearchBox").AsTextBox().Focus();
+    }
+
     public void WaitForIndexReady()
     {
         WaitForElementText("SearchIndexStatusText", "Full-text ready");

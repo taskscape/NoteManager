@@ -5,6 +5,7 @@ using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using NoteManager.App.Infrastructure;
+using NoteManager.App.Models;
 using NoteManager.App.Services;
 using NoteManager.App.ViewModels;
 using NoteManager.Desktop.Dialogs;
@@ -30,6 +31,8 @@ public partial class MainWindow : Window
     private UiAutomationServer? _automationServer;
     private bool _started;
     private bool _storagePickerOpen;
+    private bool _isCommittingTitleEdit;
+    private NoteItem? _titleEditNote;
 
     public MainWindow()
         : this(new ApplicationOptions(null, null, null))
@@ -50,6 +53,87 @@ public partial class MainWindow : Window
     }
 
     private MainViewModel ViewModel => (MainViewModel)DataContext!;
+
+    private void SelectedNoteTitle_OnClick(
+        object? sender,
+        RoutedEventArgs e)
+    {
+        var note = ViewModel.SelectedNote;
+        if (note is null || !ViewModel.CanDeleteSelectedNote)
+        {
+            return;
+        }
+
+        _titleEditNote = note;
+        SelectedNoteTitleEditor.Text = note.FileName;
+        SelectedNoteTitle.IsVisible = false;
+        SelectedNoteTitleEditor.IsVisible = true;
+        SelectedNoteTitleEditor.Focus();
+        SelectedNoteTitleEditor.SelectAll();
+        e.Handled = true;
+    }
+
+    private void SelectedNoteTitleEditor_OnKeyDown(
+        object? sender,
+        KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter)
+        {
+            CommitTitleEdit(keepOpenOnFailure: true);
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Escape)
+        {
+            EndTitleEdit();
+            e.Handled = true;
+        }
+    }
+
+    private void SelectedNoteTitleEditor_OnLostFocus(
+        object? sender,
+        RoutedEventArgs e)
+    {
+        CommitTitleEdit(keepOpenOnFailure: false);
+    }
+
+    private void CommitTitleEdit(bool keepOpenOnFailure)
+    {
+        if (_isCommittingTitleEdit || _titleEditNote is null)
+        {
+            return;
+        }
+
+        _isCommittingTitleEdit = true;
+        try
+        {
+            if (ViewModel.TryRenameNote(
+                    _titleEditNote,
+                    SelectedNoteTitleEditor.Text ?? string.Empty))
+            {
+                EndTitleEdit();
+            }
+            else if (keepOpenOnFailure)
+            {
+                SelectedNoteTitleEditor.Focus();
+                SelectedNoteTitleEditor.SelectAll();
+            }
+            else
+            {
+                EndTitleEdit();
+            }
+        }
+        finally
+        {
+            _isCommittingTitleEdit = false;
+        }
+    }
+
+    private void EndTitleEdit()
+    {
+        _titleEditNote = null;
+        SelectedNoteTitleEditor.IsVisible = false;
+        SelectedNoteTitle.IsVisible = true;
+    }
 
     private async void MainWindow_OnOpened(object? sender, EventArgs e)
     {
@@ -265,10 +349,7 @@ public partial class MainWindow : Window
 
     private async void MainWindow_OnKeyDown(object? sender, KeyEventArgs e)
     {
-        var commandModifier =
-            e.KeyModifiers.HasFlag(KeyModifiers.Control)
-            || e.KeyModifiers.HasFlag(KeyModifiers.Meta);
-        if (!commandModifier)
+        if (!IsCommandShortcut(e.KeyModifiers))
         {
             return;
         }
@@ -292,6 +373,15 @@ public partial class MainWindow : Window
                 }
                 break;
         }
+    }
+
+    private static bool IsCommandShortcut(KeyModifiers modifiers)
+    {
+        // AltGr is reported as Ctrl+Alt on Windows.  Excluding Alt ensures
+        // Polish characters such as AltGr+O (ó) are handled by the editor.
+        return !modifiers.HasFlag(KeyModifiers.Alt)
+               && (modifiers.HasFlag(KeyModifiers.Control)
+                   || modifiers.HasFlag(KeyModifiers.Meta));
     }
 
     private async Task<string?> PickFolderAsync()

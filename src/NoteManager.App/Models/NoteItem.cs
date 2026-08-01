@@ -20,6 +20,8 @@ public enum ThumbnailKind
 public sealed class NoteItem : ObservableObject
 {
     private string _title = string.Empty;
+    private string _fileName = string.Empty;
+    private string _sourceFilePath = string.Empty;
     private string _size = string.Empty;
     private string _modifiedAt = "26.07.2026 14:18";
     private string _plainTextContent = string.Empty;
@@ -36,7 +38,11 @@ public sealed class NoteItem : ObservableObject
     }
 
     public required string Subtitle { get; init; }
-    public required string FileName { get; init; }
+    public required string FileName
+    {
+        get => _fileName;
+        init => _fileName = value;
+    }
     public required string Size
     {
         get => _size;
@@ -72,7 +78,11 @@ public sealed class NoteItem : ObservableObject
     }
     public string GeneratedFilePath { get; set; } = string.Empty;
     public bool IsMarkdownFile { get; init; }
-    public string SourceFilePath { get; init; } = string.Empty;
+    public string SourceFilePath
+    {
+        get => _sourceFilePath;
+        init => _sourceFilePath = value;
+    }
     public string PlainTextContent
     {
         get => _plainTextContent;
@@ -105,6 +115,30 @@ public sealed class NoteItem : ObservableObject
     }
 
     public void MarkSaved() => IsDirty = false;
+
+    public void UpdateFileIdentity(string fileName, string sourceFilePath)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(fileName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(sourceFilePath);
+
+        if (!_fileName.Equals(fileName, StringComparison.Ordinal))
+        {
+            _fileName = fileName;
+            OnPropertyChanged(nameof(FileName));
+            OnPropertyChanged(nameof(IsWordDocument));
+            OnPropertyChanged(nameof(AttachmentGlyph));
+            OnPropertyChanged(nameof(ListAttachmentText));
+        }
+
+        if (!_sourceFilePath.Equals(sourceFilePath, StringComparison.Ordinal))
+        {
+            _sourceFilePath = sourceFilePath;
+            OnPropertyChanged(nameof(SourceFilePath));
+        }
+
+        Title = fileName;
+        GeneratedFilePath = sourceFilePath;
+    }
 
     public void UpdateFileMetadata(
         string size,

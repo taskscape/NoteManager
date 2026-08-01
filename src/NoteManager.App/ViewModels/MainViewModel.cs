@@ -782,11 +782,11 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     private static string CreateEmptyMarkdownFile(string folderPath)
     {
-        for (var suffix = 1; suffix <= 10_000; suffix++)
+        for (var suffix = 0; suffix <= 10_000; suffix++)
         {
-            var fileName = suffix == 1
+            var fileName = suffix == 0
                 ? "Untitled note.md"
-                : $"Untitled note {suffix}.md";
+                : $"Untitled note ({suffix}).md";
             var candidatePath = Path.Combine(folderPath, fileName);
 
             try
@@ -805,6 +805,137 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
 
         throw new IOException("No available Untitled note file name was found.");
+    }
+
+    public bool TryRenameNote(NoteItem note, string requestedFileName)
+    {
+        ArgumentNullException.ThrowIfNull(note);
+
+        if (!CanRenameNote(note))
+        {
+            SetStatus("Select a Markdown note from the current folder before renaming");
+            return false;
+        }
+
+        string fileName;
+        try
+        {
+            fileName = NormalizeMarkdownFileName(requestedFileName);
+        }
+        catch (ArgumentException exception)
+        {
+            SetStatus($"Could not rename note: {exception.Message}");
+            return false;
+        }
+
+        var sourcePath = Path.GetFullPath(note.SourceFilePath);
+        var sourceFolder = Path.GetDirectoryName(sourcePath);
+        if (sourceFolder is null)
+        {
+            SetStatus("Could not rename note: the note folder could not be resolved");
+            return false;
+        }
+
+        if (Path.GetFileName(sourcePath).Equals(fileName, StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        if (ReferenceEquals(note, SelectedNote) && !TrySaveSelectedNote())
+        {
+            return false;
+        }
+
+        try
+        {
+            var destinationPath = FindAvailableMarkdownPath(
+                sourceFolder,
+                fileName,
+                sourcePath);
+            File.Move(sourcePath, destinationPath);
+            note.UpdateFileIdentity(
+                Path.GetFileName(destinationPath),
+                destinationPath);
+            RefreshEmbeddedMediaReferences(note);
+            RefreshNoteFilter();
+            SetStatus($"Renamed note to {note.FileName}");
+            StartBackgroundIndex(CurrentFolderPath);
+            return true;
+        }
+        catch (Exception exception) when (
+            exception is IOException
+            or UnauthorizedAccessException
+            or NotSupportedException)
+        {
+            SetStatus($"Could not rename {note.FileName}: {exception.Message}");
+            return false;
+        }
+    }
+
+    private bool CanRenameNote(NoteItem note)
+        => note.IsMarkdownFile
+           && IsFolderMode
+           && !IsLoadingFolder
+           && IsMarkdownPathInCurrentFolder(note.SourceFilePath);
+
+    private static string NormalizeMarkdownFileName(string requestedFileName)
+    {
+        var fileName = requestedFileName?.Trim() ?? string.Empty;
+        if (fileName.Length == 0)
+        {
+            throw new ArgumentException("Enter a file name.");
+        }
+
+        if (!Path.GetFileName(fileName).Equals(fileName, StringComparison.Ordinal)
+            || fileName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0
+            || fileName is "." or ".."
+            || fileName.EndsWith(' ')
+            || fileName.EndsWith('.'))
+        {
+            throw new ArgumentException("Enter a valid file name without a folder path.");
+        }
+
+        var extension = Path.GetExtension(fileName);
+        if (extension.Length == 0)
+        {
+            return $"{fileName}.md";
+        }
+
+        if (!extension.Equals(".md", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException("Markdown note names must end in .md.");
+        }
+
+        return fileName;
+    }
+
+    private static string FindAvailableMarkdownPath(
+        string folderPath,
+        string requestedFileName,
+        string sourcePath)
+    {
+        var requestedPath = Path.GetFullPath(
+            Path.Combine(folderPath, requestedFileName));
+        if (requestedPath.Equals(sourcePath, StringComparison.OrdinalIgnoreCase)
+            || !File.Exists(requestedPath))
+        {
+            return requestedPath;
+        }
+
+        var stem = Path.GetFileNameWithoutExtension(requestedFileName);
+        var extension = Path.GetExtension(requestedFileName);
+        for (var suffix = 1; suffix <= 10_000; suffix++)
+        {
+            var candidatePath = Path.Combine(
+                folderPath,
+                $"{stem} ({suffix}){extension}");
+            if (!File.Exists(candidatePath))
+            {
+                return candidatePath;
+            }
+        }
+
+        throw new IOException($"No available file name was found for {requestedFileName}.");
     }
 
     public bool TrySaveSelectedNote(bool updateSearchIndex = true)
