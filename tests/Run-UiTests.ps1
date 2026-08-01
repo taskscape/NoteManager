@@ -11,9 +11,9 @@ param(
 $ErrorActionPreference = "Stop"
 
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
-$testProject = Join-Path $PSScriptRoot "NoteManager.App.UiTests\NoteManager.App.UiTests.csproj"
+$testProject = Join-Path $PSScriptRoot "NoteManager.Desktop.UiTests\NoteManager.Desktop.UiTests.csproj"
 $applicationPath = Join-Path $repositoryRoot (
-    "src\NoteManager.App\bin\{0}\net8.0-windows10.0.19041.0\NoteManager.exe" -f
+    "src\NoteManager.Desktop\bin\{0}\net10.0\NoteManager.exe" -f
         $Configuration)
 $artifactRoot = Join-Path $repositoryRoot "artifacts\ui-tests"
 $resultDirectory = Join-Path $artifactRoot "results"

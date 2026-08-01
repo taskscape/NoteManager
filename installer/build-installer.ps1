@@ -3,7 +3,7 @@
     Publishes NoteManager and builds an Inno Setup installer.
 
 .DESCRIPTION
-    Creates an optimized, self-contained Windows publish of the WPF application
+    Creates an optimized, self-contained Windows publish of the Avalonia application
     and compiles it into a versioned Inno Setup installer.
 
     Startup-oriented publish settings are enabled by default:
@@ -51,7 +51,7 @@ $ErrorActionPreference = "Stop"
 
 $scriptDir = [System.IO.Path]::GetFullPath($PSScriptRoot)
 $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $scriptDir ".."))
-$projectPath = Join-Path $repoRoot "src\NoteManager.App\NoteManager.App.csproj"
+$projectPath = Join-Path $repoRoot "src\NoteManager.Desktop\NoteManager.Desktop.csproj"
 $publishDir = Join-Path $scriptDir "publish"
 $outputDir = Join-Path $scriptDir "Output"
 $issFile = Join-Path $scriptDir "NoteManager.iss"

@@ -3,7 +3,6 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Text;
-using System.Windows.Data;
 using NoteManager.App.Infrastructure;
 using NoteManager.App.Models;
 using NoteManager.App.Services;
@@ -13,12 +12,14 @@ namespace NoteManager.App.ViewModels;
 public sealed class MainViewModel : ObservableObject, IDisposable
 {
     private readonly RangeObservableCollection<NoteItem> _allNotes;
+    private readonly RangeObservableCollection<NoteItem> _visibleNotes;
     private readonly InfostackerPublishingService _infostackerPublishingService;
     private CancellationTokenSource? _indexCancellation;
+    private CancellationTokenSource? _mediaRefreshCancellation;
     private CancellationTokenSource? _publishCancellation;
     private CancellationTokenSource? _searchCancellation;
-    private HashSet<string>? _fullTextMatches;
-    private string _fullTextMatchQuery = string.Empty;
+    private Dictionary<string, NoteSearchHit>? _fullTextHits;
+    private NoteSearchMode? _activeSearchMode;
     private string _searchText = string.Empty;
     private NoteItem? _selectedNote;
     private NavigationItem? _selectedNavigationItem;
@@ -28,12 +29,17 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private bool _isLoadingFolder;
     private bool _isIndexing;
     private bool _isPublishing;
+    private bool _isSearchIndexAvailable;
+    private bool _isSearching;
     private string _statusText = string.Empty;
     private string _centerHeading = "All notes";
     private string _currentFolderPath = string.Empty;
     private string _searchIndexStatus = string.Empty;
     private string _shareStatusText = string.Empty;
+    private NoteSortType _selectedSortType = NoteSortType.Updated;
+    private EmbeddedMediaVaultIndex? _mediaIndex;
     private long _folderGeneration;
+    private long _searchGeneration;
 
     private const string AllNotesFilterKey = "*";
     private const string UntaggedFilterKey = "__untagged__";
@@ -44,12 +50,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         _infostackerPublishingService =
             infostackerPublishingService ?? new InfostackerPublishingService();
         _allNotes = new RangeObservableCollection<NoteItem>();
+        _visibleNotes = new RangeObservableCollection<NoteItem>();
         _allNotes.ReplaceRange(SampleDataService.CreateNotes());
         NavigationItems = [];
         RebuildTagNavigation();
-
-        NotesView = CollectionViewSource.GetDefaultView(_allNotes);
-        NotesView.Filter = FilterNote;
 
         NewNoteCommand = new AsyncRelayCommand(_ => CreateNewNoteAsync(), _ => CanCreateNote);
         ClearTagFilterCommand = new RelayCommand(_ => ClearTagFilter());
@@ -57,15 +61,28 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         ShareCommand = new RelayCommand(_ => ToggleSharePanel());
         CloseShareCommand = new RelayCommand(_ => IsSharePanelOpen = false);
         OpenAttachmentCommand = new RelayCommand(_ => OpenAttachment(), _ => SelectedNote is not null);
+        SortNotesCommand = new RelayCommand(
+            parameter =>
+            {
+                if (Enum.TryParse<NoteSortType>(
+                        parameter?.ToString(),
+                        ignoreCase: true,
+                        out var sortType))
+                {
+                    SetSortType(sortType);
+                }
+            },
+            _ => CanSortNotes);
         ViewModeCommand = new RelayCommand(
             parameter => ChangeView(parameter?.ToString() ?? "View updated"));
 
+        _visibleNotes.ReplaceRange(SortNotes(_allNotes));
         SelectedNote = _allNotes.First(note => note.ThumbnailKind == ThumbnailKind.SpacePoster);
         SampleDocumentService.EnsureAll(_allNotes);
     }
 
     public ObservableCollection<NavigationItem> NavigationItems { get; }
-    public ICollectionView NotesView { get; }
+    public ObservableCollection<NoteItem> NotesView => _visibleNotes;
 
     public AsyncRelayCommand NewNoteCommand { get; }
     public RelayCommand ClearTagFilterCommand { get; }
@@ -73,6 +90,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public RelayCommand ShareCommand { get; }
     public RelayCommand CloseShareCommand { get; }
     public RelayCommand OpenAttachmentCommand { get; }
+    public RelayCommand SortNotesCommand { get; }
     public RelayCommand ViewModeCommand { get; }
 
     public string SearchText
@@ -82,10 +100,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         {
             if (SetProperty(ref _searchText, value))
             {
-                _fullTextMatches = null;
-                _fullTextMatchQuery = string.Empty;
-                RefreshNoteFilter();
-                QueueFullTextSearch(useDebounce: true);
+                HandleSearchTextChanged();
             }
         }
     }
@@ -96,7 +111,44 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         private set => SetProperty(ref _centerHeading, value);
     }
 
-    public string VisibleNoteCount => $"{NotesView.Cast<object>().Count():N0} notes";
+    public string VisibleNoteCount => $"{NotesView.Count:N0} notes";
+    public bool HasNoSearchResults => IsSearchActive && NotesView.Count == 0;
+    public bool IsSearchAvailable
+        => IsFolderMode && _isSearchIndexAvailable && !IsIndexing;
+    public bool IsSearching
+    {
+        get => _isSearching;
+        private set
+        {
+            if (SetProperty(ref _isSearching, value))
+            {
+                OnPropertyChanged(nameof(IsSearchInputEnabled));
+            }
+        }
+    }
+    public bool IsSearchInputEnabled => IsSearchAvailable && !IsSearching;
+    public string SearchPlaceholderText
+        => IsIndexing
+            ? "Indexing in progress"
+            : !IsFolderMode
+                ? "Open a folder to search"
+                : _isSearchIndexAvailable
+                    ? "Search notes"
+                    : "Search unavailable";
+
+    public NoteSortType SelectedSortType => _selectedSortType;
+    public bool IsSearchActive => _activeSearchMode is not null;
+    public bool CanSortNotes => !IsSearchActive;
+    public string SortNotesToolTip
+        => IsSearchActive ? "Search mode controls note order" : "Sort notes";
+    public bool IsSortByTitle
+        => !IsSearchActive && SelectedSortType == NoteSortType.Title;
+    public bool IsSortByCreated
+        => !IsSearchActive && SelectedSortType == NoteSortType.Created;
+    public bool IsSortByUpdated
+        => !IsSearchActive && SelectedSortType == NoteSortType.Updated;
+    public bool IsSortBySize
+        => !IsSearchActive && SelectedSortType == NoteSortType.Size;
 
     public NoteItem? SelectedNote
     {
@@ -130,8 +182,11 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 }
             }
 
+            var previousNote = _selectedNote;
             if (SetProperty(ref _selectedNote, value))
             {
+                DetachSelectedNote(previousNote);
+                AttachSelectedNote(value);
                 OnPropertyChanged(nameof(CanDeleteSelectedNote));
                 OnPropertyChanged(nameof(CanPublishSelectedNote));
                 OnPropertyChanged(nameof(CanAssignTags));
@@ -158,9 +213,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             }
 
             CenterHeading = value?.Label ?? "All notes";
-            NotesView.Refresh();
-            EnsureSelectedNote();
-            OnPropertyChanged(nameof(VisibleNoteCount));
+            RefreshNoteFilter();
         }
     }
 
@@ -208,6 +261,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             if (SetProperty(ref _isFolderMode, value))
             {
                 RefreshFileCommandState();
+                NotifySearchAvailabilityChanged();
             }
         }
     }
@@ -227,7 +281,13 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public bool IsIndexing
     {
         get => _isIndexing;
-        private set => SetProperty(ref _isIndexing, value);
+        private set
+        {
+            if (SetProperty(ref _isIndexing, value))
+            {
+                NotifySearchAvailabilityChanged();
+            }
+        }
     }
 
     public string CurrentFolderPath
@@ -310,9 +370,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             ?? NavigationItems.FirstOrDefault(item =>
                 item.FilterKey == AllNotesFilterKey);
         SelectedNavigationItem = restoredNavigation;
-        NotesView.Refresh();
-        EnsureSelectedNote();
-        OnPropertyChanged(nameof(VisibleNoteCount));
+        RefreshNoteFilter();
         SetStatus(
             normalizedTags.Length == 1
                 ? $"Assigned 1 tag to {note.FileName}"
@@ -320,13 +378,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         return true;
     }
 
-    private bool FilterNote(object item)
+    private bool FilterNote(NoteItem note)
     {
-        if (item is not NoteItem note)
-        {
-            return false;
-        }
-
         var selectedTag = SelectedNavigationItem?.FilterKey;
         if (selectedTag == UntaggedFilterKey && note.Tags.Length > 0)
         {
@@ -341,45 +394,131 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             return false;
         }
 
-        if (string.IsNullOrWhiteSpace(SearchText))
+        if (!IsSearchActive || _fullTextHits is null)
         {
             return true;
         }
 
-        var query = SearchText.Trim();
-        var metadataMatch = MatchesMetadata(note, query);
-        if (!IsFolderMode
-            || _fullTextMatches is null
-            || !_fullTextMatchQuery.Equals(query, StringComparison.Ordinal))
-        {
-            return metadataMatch;
-        }
-
-        return _fullTextMatches.Contains(note.SourceFilePath)
-               || (IsIndexing && metadataMatch);
+        return _fullTextHits.ContainsKey(note.SourceFilePath);
     }
-
-    private static bool MatchesMetadata(NoteItem note, string query)
-        => note.Title.Contains(query, StringComparison.OrdinalIgnoreCase)
-           || note.Subtitle.Contains(query, StringComparison.OrdinalIgnoreCase)
-           || note.FileName.Contains(query, StringComparison.OrdinalIgnoreCase)
-           || note.Tags.Any(tag => tag.Contains(query, StringComparison.OrdinalIgnoreCase));
 
     private void RefreshNoteFilter()
     {
-        NotesView.Refresh();
+        _visibleNotes.ReplaceRange(SortNotes(_allNotes.Where(FilterNote)));
         EnsureSelectedNote();
         OnPropertyChanged(nameof(VisibleNoteCount));
+        OnPropertyChanged(nameof(HasNoSearchResults));
     }
 
-    private void EnsureSelectedNote()
+    public void SetSortType(NoteSortType sortType)
     {
-        if (SelectedNote is not null && NotesView.Cast<NoteItem>().Contains(SelectedNote))
+        if (!Enum.IsDefined(sortType))
+        {
+            throw new ArgumentOutOfRangeException(nameof(sortType));
+        }
+
+        if (IsSearchActive)
         {
             return;
         }
 
-        SelectedNote = NotesView.Cast<NoteItem>().FirstOrDefault();
+        if (!ApplySortType(sortType))
+        {
+            return;
+        }
+
+        RefreshNoteFilter();
+        if (!IsFolderMode)
+        {
+            return;
+        }
+
+        try
+        {
+            NoteSortPreferenceService.Save(CurrentFolderPath, sortType);
+        }
+        catch (Exception exception) when (
+            exception is IOException
+            or UnauthorizedAccessException
+            or NotSupportedException)
+        {
+            SetStatus(
+                $"Sorted notes by {sortType}, but the preference could not be saved: {exception.Message}");
+        }
+    }
+
+    private bool ApplySortType(NoteSortType sortType)
+    {
+        if (_selectedSortType == sortType)
+        {
+            return false;
+        }
+
+        _selectedSortType = sortType;
+        OnPropertyChanged(nameof(SelectedSortType));
+        OnPropertyChanged(nameof(IsSortByTitle));
+        OnPropertyChanged(nameof(IsSortByCreated));
+        OnPropertyChanged(nameof(IsSortByUpdated));
+        OnPropertyChanged(nameof(IsSortBySize));
+        return true;
+    }
+
+    private IEnumerable<NoteItem> SortNotes(IEnumerable<NoteItem> notes)
+    {
+        if (IsSearchActive)
+        {
+            if (_activeSearchMode == NoteSearchMode.BestMatch
+                && _fullTextHits is not null)
+            {
+                return notes
+                    .OrderByDescending(note =>
+                        _fullTextHits.TryGetValue(note.SourceFilePath, out var hit)
+                            ? hit.RelevanceScore
+                            : double.MinValue)
+                    .ThenByDescending(note =>
+                        _fullTextHits.TryGetValue(note.SourceFilePath, out var hit)
+                            ? hit.MatchedPositiveTermCount
+                            : -1)
+                    .ThenByDescending(note => note.UpdatedAt)
+                    .ThenBy(note => note.Title, StringComparer.OrdinalIgnoreCase)
+                    .ThenBy(
+                        note => note.SourceFilePath,
+                        StringComparer.OrdinalIgnoreCase);
+            }
+
+            return notes
+                .OrderByDescending(note => note.UpdatedAt)
+                .ThenBy(note => note.Title, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(
+                    note => note.SourceFilePath,
+                    StringComparer.OrdinalIgnoreCase);
+        }
+
+        var sorted = SelectedSortType switch
+        {
+            NoteSortType.Title => notes
+                .OrderBy(note => note.Title, StringComparer.OrdinalIgnoreCase),
+            NoteSortType.Created => notes
+                .OrderByDescending(note => note.CreatedAt),
+            NoteSortType.Size => notes
+                .OrderByDescending(note => note.SizeBytes),
+            _ => notes
+                .OrderByDescending(note => note.UpdatedAt)
+        };
+
+        return sorted
+            .ThenBy(note => note.Title, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(note => note.SourceFilePath, StringComparer.OrdinalIgnoreCase);
+    }
+
+    private void EnsureSelectedNote()
+    {
+        if (SelectedNote is not null && NotesView.Contains(SelectedNote))
+        {
+            return;
+        }
+
+        SelectedNote = NotesView.FirstOrDefault();
     }
 
     private async Task CreateNewNoteAsync()
@@ -503,8 +642,11 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 targetNote.PlainTextContent,
                 importedPdfs.Select(pdf => pdf.MarkdownEmbed),
                 insertionIndex);
-            targetNote.AddPdfReferences(
-                importedPdfs.Select(pdf => pdf.DestinationPath));
+            targetNote.AddEmbeddedMediaReferences(
+                importedPdfs.Select(pdf => new EmbeddedMediaReference(
+                    pdf.EmbedTarget,
+                    pdf.DestinationPath,
+                    EmbeddedMediaKind.Pdf)));
 
             if (!TrySaveSelectedNote())
             {
@@ -640,11 +782,11 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     private static string CreateEmptyMarkdownFile(string folderPath)
     {
-        for (var suffix = 1; suffix <= 10_000; suffix++)
+        for (var suffix = 0; suffix <= 10_000; suffix++)
         {
-            var fileName = suffix == 1
+            var fileName = suffix == 0
                 ? "Untitled note.md"
-                : $"Untitled note {suffix}.md";
+                : $"Untitled note ({suffix}).md";
             var candidatePath = Path.Combine(folderPath, fileName);
 
             try
@@ -663,6 +805,137 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
 
         throw new IOException("No available Untitled note file name was found.");
+    }
+
+    public bool TryRenameNote(NoteItem note, string requestedFileName)
+    {
+        ArgumentNullException.ThrowIfNull(note);
+
+        if (!CanRenameNote(note))
+        {
+            SetStatus("Select a Markdown note from the current folder before renaming");
+            return false;
+        }
+
+        string fileName;
+        try
+        {
+            fileName = NormalizeMarkdownFileName(requestedFileName);
+        }
+        catch (ArgumentException exception)
+        {
+            SetStatus($"Could not rename note: {exception.Message}");
+            return false;
+        }
+
+        var sourcePath = Path.GetFullPath(note.SourceFilePath);
+        var sourceFolder = Path.GetDirectoryName(sourcePath);
+        if (sourceFolder is null)
+        {
+            SetStatus("Could not rename note: the note folder could not be resolved");
+            return false;
+        }
+
+        if (Path.GetFileName(sourcePath).Equals(fileName, StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        if (ReferenceEquals(note, SelectedNote) && !TrySaveSelectedNote())
+        {
+            return false;
+        }
+
+        try
+        {
+            var destinationPath = FindAvailableMarkdownPath(
+                sourceFolder,
+                fileName,
+                sourcePath);
+            File.Move(sourcePath, destinationPath);
+            note.UpdateFileIdentity(
+                Path.GetFileName(destinationPath),
+                destinationPath);
+            RefreshEmbeddedMediaReferences(note);
+            RefreshNoteFilter();
+            SetStatus($"Renamed note to {note.FileName}");
+            StartBackgroundIndex(CurrentFolderPath);
+            return true;
+        }
+        catch (Exception exception) when (
+            exception is IOException
+            or UnauthorizedAccessException
+            or NotSupportedException)
+        {
+            SetStatus($"Could not rename {note.FileName}: {exception.Message}");
+            return false;
+        }
+    }
+
+    private bool CanRenameNote(NoteItem note)
+        => note.IsMarkdownFile
+           && IsFolderMode
+           && !IsLoadingFolder
+           && IsMarkdownPathInCurrentFolder(note.SourceFilePath);
+
+    private static string NormalizeMarkdownFileName(string requestedFileName)
+    {
+        var fileName = requestedFileName?.Trim() ?? string.Empty;
+        if (fileName.Length == 0)
+        {
+            throw new ArgumentException("Enter a file name.");
+        }
+
+        if (!Path.GetFileName(fileName).Equals(fileName, StringComparison.Ordinal)
+            || fileName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0
+            || fileName is "." or ".."
+            || fileName.EndsWith(' ')
+            || fileName.EndsWith('.'))
+        {
+            throw new ArgumentException("Enter a valid file name without a folder path.");
+        }
+
+        var extension = Path.GetExtension(fileName);
+        if (extension.Length == 0)
+        {
+            return $"{fileName}.md";
+        }
+
+        if (!extension.Equals(".md", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException("Markdown note names must end in .md.");
+        }
+
+        return fileName;
+    }
+
+    private static string FindAvailableMarkdownPath(
+        string folderPath,
+        string requestedFileName,
+        string sourcePath)
+    {
+        var requestedPath = Path.GetFullPath(
+            Path.Combine(folderPath, requestedFileName));
+        if (requestedPath.Equals(sourcePath, StringComparison.OrdinalIgnoreCase)
+            || !File.Exists(requestedPath))
+        {
+            return requestedPath;
+        }
+
+        var stem = Path.GetFileNameWithoutExtension(requestedFileName);
+        var extension = Path.GetExtension(requestedFileName);
+        for (var suffix = 1; suffix <= 10_000; suffix++)
+        {
+            var candidatePath = Path.Combine(
+                folderPath,
+                $"{stem} ({suffix}){extension}");
+            if (!File.Exists(candidatePath))
+            {
+                return candidatePath;
+            }
+        }
+
+        throw new IOException($"No available file name was found for {requestedFileName}.");
     }
 
     public bool TrySaveSelectedNote(bool updateSearchIndex = true)
@@ -685,6 +958,14 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 note.SourceFilePath,
                 note.PlainTextContent);
             note.MarkSaved();
+            var savedFile = new FileInfo(note.SourceFilePath);
+            note.UpdateFileMetadata(
+                MarkdownFolderService.FormatFileSize(savedFile.Length),
+                savedFile.Length,
+                savedFile.LastWriteTime.ToString("dd.MM.yyyy HH:mm"),
+                savedFile.LastWriteTimeUtc);
+            RefreshEmbeddedMediaReferences(note);
+            RefreshNoteFilter();
             SetStatus($"Saved {note.FileName}");
             if (updateSearchIndex)
             {
@@ -867,6 +1148,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         CancelPublishing();
         IsLoadingFolder = true;
         SetStatus($"Loading Markdown notes from {folderPath}…");
+        var sortPreferenceWarning = string.Empty;
 
         try
         {
@@ -875,27 +1157,43 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             SearchText = string.Empty;
             SelectedNavigationItem = null;
             SelectedNote = null;
+            _mediaIndex = result.MediaIndex;
             _allNotes.ReplaceRange(result.Notes);
 
             CurrentFolderPath = Path.GetFullPath(folderPath);
             IsFolderMode = true;
+            ApplySortType(NoteSortPreferenceService.Load(CurrentFolderPath));
+            try
+            {
+                NoteSortPreferenceService.Save(
+                    CurrentFolderPath,
+                    SelectedSortType);
+            }
+            catch (Exception exception) when (
+                exception is IOException
+                or UnauthorizedAccessException
+                or NotSupportedException)
+            {
+                sortPreferenceWarning =
+                    $" (sort preference could not be saved: {exception.Message})";
+            }
+
             RebuildTagNavigation();
-            NotesView.Refresh();
             SelectedNavigationItem = NavigationItems.FirstOrDefault(item => item.FilterKey == AllNotesFilterKey);
             SelectedNote = selectedFilePath is null
-                ? NotesView.Cast<NoteItem>().FirstOrDefault()
+                ? NotesView.FirstOrDefault()
                 : NotesView
-                    .Cast<NoteItem>()
                     .FirstOrDefault(note => note.SourceFilePath.Equals(
                         selectedFilePath,
                         StringComparison.OrdinalIgnoreCase))
-                  ?? NotesView.Cast<NoteItem>().FirstOrDefault();
+                  ?? NotesView.FirstOrDefault();
             OnPropertyChanged(nameof(VisibleNoteCount));
 
             var skippedText = result.FailedFileCount > 0
                 ? $" ({result.FailedFileCount:N0} unreadable file(s) skipped)"
                 : string.Empty;
-            SetStatus($"Loaded {result.Notes.Count:N0} Markdown note(s) from {CurrentFolderPath}{skippedText}");
+            SetStatus(
+                $"Loaded {result.Notes.Count:N0} Markdown note(s) from {CurrentFolderPath}{skippedText}{sortPreferenceWarning}");
             StartBackgroundIndex(CurrentFolderPath);
         }
         catch (Exception exception)
@@ -917,11 +1215,11 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
         _indexCancellation = new CancellationTokenSource();
         _searchCancellation = null;
-        _fullTextMatches = null;
-        _fullTextMatchQuery = string.Empty;
+        _searchGeneration++;
         var generation = ++_folderGeneration;
         var cancellationToken = _indexCancellation.Token;
 
+        SetSearchIndexAvailable(false);
         IsIndexing = true;
         SearchIndexStatus = "Indexing 0%";
         var progress = new Progress<NoteSearchIndexProgress>(update =>
@@ -937,7 +1235,6 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             SearchIndexStatus = $"Indexing {Math.Clamp(percentage, 0, 100)}%";
             SetStatus(
                 $"Updating full-text index… {update.ProcessedFiles:N0} / {update.TotalFiles:N0} notes");
-            QueueFullTextSearch(useDebounce: true);
         });
 
         _ = RunIndexUpdateAsync(folderPath, generation, progress, cancellationToken);
@@ -958,8 +1255,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 return;
             }
 
-            IsIndexing = false;
             SearchIndexStatus = "Full-text ready";
+            SetSearchIndexAvailable(true);
+            IsIndexing = false;
             var changeSummary = result.UpdatedFiles == 0 && result.RemovedFiles == 0
                 ? "no changes"
                 : $"{result.UpdatedFiles:N0} updated, {result.RemovedFiles:N0} removed";
@@ -981,22 +1279,51 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 return;
             }
 
-            IsIndexing = false;
             SearchIndexStatus = "Index unavailable";
+            SetSearchIndexAvailable(false);
+            IsIndexing = false;
             SetStatus($"Notes loaded; full-text index unavailable: {exception.Message}");
         }
     }
 
+    private void HandleSearchTextChanged()
+    {
+        CancelQueuedSearch();
+
+        var parseResult = NoteSearchQueryParser.Parse(SearchText);
+        if (!parseResult.IsValid)
+        {
+            SetStatus(
+                $"Search expression error at character {parseResult.ErrorPosition + 1}: "
+                + parseResult.Error);
+            return;
+        }
+
+        if (parseResult.Query!.IsEmpty)
+        {
+            ClearActiveSearch(refreshNotes: true);
+            return;
+        }
+
+        QueueFullTextSearch(useDebounce: true);
+    }
+
+    public void SubmitSearch()
+    {
+        QueueFullTextSearch(useDebounce: false);
+    }
+
     private void QueueFullTextSearch(bool useDebounce)
     {
-        _searchCancellation?.Cancel();
-        _searchCancellation?.Dispose();
-        _searchCancellation = null;
+        CancelQueuedSearch();
 
         var query = SearchText.Trim();
+        var parseResult = NoteSearchQueryParser.Parse(query);
         if (!IsFolderMode
+            || !IsSearchAvailable
             || string.IsNullOrWhiteSpace(CurrentFolderPath)
-            || query.Length == 0)
+            || !parseResult.IsValid
+            || parseResult.Query!.IsEmpty)
         {
             return;
         }
@@ -1004,19 +1331,24 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         _searchCancellation = new CancellationTokenSource();
         var cancellationToken = _searchCancellation.Token;
         var folderPath = CurrentFolderPath;
-        var generation = _folderGeneration;
+        var folderGeneration = _folderGeneration;
+        var searchGeneration = ++_searchGeneration;
         _ = RunFullTextSearchAsync(
             folderPath,
             query,
-            generation,
+            parseResult.Query,
+            folderGeneration,
+            searchGeneration,
             useDebounce,
             cancellationToken);
     }
 
     private async Task RunFullTextSearchAsync(
         string folderPath,
-        string query,
-        long generation,
+        string queryText,
+        ParsedNoteSearchQuery query,
+        long folderGeneration,
+        long searchGeneration,
         bool useDebounce,
         CancellationToken cancellationToken)
     {
@@ -1024,34 +1356,122 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         {
             if (useDebounce)
             {
-                await Task.Delay(250, cancellationToken);
+                await Task.Delay(250);
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    return;
+                }
             }
 
+            IsSearching = true;
             var result = await Task.Run(
                 () => NoteSearchIndexService.Search(
                     folderPath,
                     query,
-                    maxResults: 10_000,
-                    cancellationToken),
-                cancellationToken);
+                    maxResults: int.MaxValue,
+                    cancellationToken));
             if (cancellationToken.IsCancellationRequested
-                || generation != _folderGeneration
-                || !SearchText.Trim().Equals(query, StringComparison.Ordinal))
+                || result.IsCanceled
+                || folderGeneration != _folderGeneration
+                || searchGeneration != _searchGeneration
+                || !SearchText.Trim().Equals(
+                    queryText,
+                    StringComparison.Ordinal))
             {
                 return;
             }
 
             if (result.IsAvailable)
             {
-                _fullTextMatches = result.Paths.ToHashSet(StringComparer.OrdinalIgnoreCase);
-                _fullTextMatchQuery = query;
+                if (result.Error is not null)
+                {
+                    SetStatus($"Search expression error: {result.Error}");
+                    return;
+                }
+
+                _fullTextHits = result.Hits.ToDictionary(
+                    hit => hit.Path,
+                    StringComparer.OrdinalIgnoreCase);
+                SetActiveSearchMode(result.Mode);
                 RefreshNoteFilter();
+                SetStatus(
+                    $"{(result.Mode == NoteSearchMode.Strict ? "Strict search" : "Best match")} · "
+                    + $"{NotesView.Count:N0} notes");
             }
         }
         catch (OperationCanceledException)
         {
             // A later keystroke, folder switch, or shutdown superseded this query.
         }
+        finally
+        {
+            if (searchGeneration == _searchGeneration)
+            {
+                IsSearching = false;
+            }
+        }
+    }
+
+    private void CancelQueuedSearch()
+    {
+        _searchCancellation?.Cancel();
+        _searchCancellation?.Dispose();
+        _searchCancellation = null;
+        _searchGeneration++;
+        IsSearching = false;
+    }
+
+    private void ClearActiveSearch(bool refreshNotes)
+    {
+        var wasActive = IsSearchActive;
+        _fullTextHits = null;
+        _activeSearchMode = null;
+        if (wasActive)
+        {
+            NotifySearchStateChanged();
+        }
+
+        if (refreshNotes)
+        {
+            RefreshNoteFilter();
+        }
+    }
+
+    private void SetActiveSearchMode(NoteSearchMode mode)
+    {
+        _activeSearchMode = mode;
+        NotifySearchStateChanged();
+    }
+
+    private void NotifySearchStateChanged()
+    {
+        OnPropertyChanged(nameof(IsSearchActive));
+        OnPropertyChanged(nameof(HasNoSearchResults));
+        OnPropertyChanged(nameof(CanSortNotes));
+        OnPropertyChanged(nameof(SortNotesToolTip));
+        OnPropertyChanged(nameof(IsSortByTitle));
+        OnPropertyChanged(nameof(IsSortByCreated));
+        OnPropertyChanged(nameof(IsSortByUpdated));
+        OnPropertyChanged(nameof(IsSortBySize));
+        SortNotesCommand.RaiseCanExecuteChanged();
+    }
+
+    private void SetSearchIndexAvailable(bool value)
+    {
+        if (_isSearchIndexAvailable == value)
+        {
+            return;
+        }
+
+        _isSearchIndexAvailable = value;
+        NotifySearchAvailabilityChanged();
+    }
+
+    private void NotifySearchAvailabilityChanged()
+    {
+        OnPropertyChanged(nameof(IsSearchAvailable));
+        OnPropertyChanged(nameof(IsSearchInputEnabled));
+        OnPropertyChanged(nameof(SearchPlaceholderText));
     }
 
     public void Dispose()
@@ -1064,6 +1484,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         _searchCancellation?.Cancel();
         _searchCancellation?.Dispose();
         _searchCancellation = null;
+        _mediaRefreshCancellation?.Cancel();
+        _mediaRefreshCancellation?.Dispose();
+        _mediaRefreshCancellation = null;
+        DetachSelectedNote(SelectedNote);
         CancelPublishing();
     }
 
@@ -1096,4 +1520,91 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     }
 
     private void SetStatus(string message) => StatusText = message;
+
+    private void AttachSelectedNote(NoteItem? note)
+    {
+        if (note is null)
+        {
+            return;
+        }
+
+        note.PropertyChanged += SelectedNote_OnPropertyChanged;
+        RefreshEmbeddedMediaReferences(note);
+    }
+
+    private void DetachSelectedNote(NoteItem? note)
+    {
+        if (note is not null)
+        {
+            note.PropertyChanged -= SelectedNote_OnPropertyChanged;
+        }
+    }
+
+    private void SelectedNote_OnPropertyChanged(
+        object? sender,
+        PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(NoteItem.PlainTextContent)
+            && sender is NoteItem note
+            && ReferenceEquals(note, SelectedNote))
+        {
+            QueueEmbeddedMediaRefresh(note);
+        }
+    }
+
+    private void QueueEmbeddedMediaRefresh(NoteItem note)
+    {
+        _mediaRefreshCancellation?.Cancel();
+        _mediaRefreshCancellation?.Dispose();
+        _mediaRefreshCancellation = null;
+
+        if (_mediaIndex is null || !CanResolveEmbeddedMediaFor(note))
+        {
+            return;
+        }
+
+        _mediaRefreshCancellation = new CancellationTokenSource();
+        var cancellationToken = _mediaRefreshCancellation.Token;
+        var generation = _folderGeneration;
+        _ = RefreshEmbeddedMediaReferencesAsync(note, generation, cancellationToken);
+    }
+
+    private async Task RefreshEmbeddedMediaReferencesAsync(
+        NoteItem note,
+        long generation,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await Task.Delay(180, cancellationToken);
+            if (cancellationToken.IsCancellationRequested
+                || generation != _folderGeneration
+                || !ReferenceEquals(note, SelectedNote))
+            {
+                return;
+            }
+
+            RefreshEmbeddedMediaReferences(note);
+        }
+        catch (OperationCanceledException)
+        {
+            // A newer edit, folder switch, or shutdown superseded this refresh.
+        }
+    }
+
+    private void RefreshEmbeddedMediaReferences(NoteItem note)
+    {
+        if (_mediaIndex is null || !CanResolveEmbeddedMediaFor(note))
+        {
+            return;
+        }
+
+        note.ReplaceEmbeddedMediaReferences(
+            _mediaIndex.ResolveAll(note.PlainTextContent, note.SourceFilePath));
+    }
+
+    private bool CanResolveEmbeddedMediaFor(NoteItem note)
+        => note.IsMarkdownFile
+           && IsFolderMode
+           && IsMarkdownPathInCurrentFolder(note.SourceFilePath);
 }

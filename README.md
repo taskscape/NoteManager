@@ -1,75 +1,108 @@
 # NoteManager
 
-NoteManager is a .NET 8 WPF desktop application inspired by the supplied three-pane notebook screenshot. It recreates the dense tag navigation, searchable note list, formatting toolbar, selected-note metadata, and a fully interactive in-app PDF preview.
+NoteManager is a cross-platform .NET 10 desktop application built with Avalonia.
+It provides tag navigation, a searchable note list, Markdown editing, note
+metadata, PDF embeds, and public-link publishing on Windows and macOS.
 
 ## Run
 
-From PowerShell in the repository root:
+From the repository root on Windows or macOS:
 
-```powershell
-dotnet run --project .\src\NoteManager.App\NoteManager.App.csproj
+```bash
+dotnet run --project src/NoteManager.Desktop/NoteManager.Desktop.csproj
 ```
 
-The repository pins the .NET 8 SDK through `global.json`. On startup, the application recursively loads the Obsidian vault at:
+The repository pins the .NET 10 SDK through `global.json`. On startup, the application recursively loads the Obsidian vault at:
 
 ```text
-C:\Projects\Obsidian
+SampleNotes
 ```
 
-Use **File → Open folder…** or `Ctrl+O` to switch to another Markdown folder.
+Use **File → Open folder…**, `Ctrl+O` on Windows, or `Command+O` on macOS to
+switch to another Markdown folder.
 
 For a dialog-free automated launch, inject the startup folder:
 
-```powershell
-dotnet run --project .\src\NoteManager.App\NoteManager.App.csproj -- --folder .\SampleNotes
+```bash
+dotnet run --project src/NoteManager.Desktop/NoteManager.Desktop.csproj -- \
+  --folder SampleNotes
 ```
 
 ## Automated regression tests
 
-The primary UI regression lane uses
-[FlaUI 5](https://github.com/FlaUI/FlaUI) with the UIA3 provider and
-[NUnit 4](https://nunit.org/). It launches the real WPF executable and verifies
-the application through Windows UI Automation, native dialogs, the clipboard,
-filesystem outcomes, a loopback Infostacker fake, and initialized WebView2 PDF
-surfaces.
+The portable service and view-model suite runs on both operating systems:
 
-Run all service and UI tests from an unlocked interactive Windows session:
-
-```powershell
-.\tests\Run-AllTests.ps1 -Configuration Debug
+```bash
+dotnet test tests/NoteManager.App.Tests/NoteManager.App.Tests.csproj
 ```
 
-Run only the serialized UI suite, or filter it to one fixture:
+On Windows, the executable-level search suite launches the current Avalonia
+application and drives the real search box through UI Automation:
 
 ```powershell
 .\tests\Run-UiTests.ps1 -Configuration Debug
-
-.\tests\Run-UiTests.ps1 `
-  -Filter "FullyQualifiedName~TagAssignmentUiTests"
 ```
 
-Every UI test creates a separate guarded vault below the user's temporary
-folder. The data covers recursive folders, tagged and untagged notes, multiple
-tag blocks, recent/all tag catalogs, Unicode and body-only searches, multiple
-PDF embeds, filename collisions, publishing attachments, and a large indexing
-set. The vault and its `.notes` database are removed after the scenario.
-
-The suite covers recursive loading and indexing; tag/search navigation;
-create/delete and all automatic-save boundaries; folder switching during
-background indexing; tag validation and block merging; public-link publishing
-and clipboard output; multiple PDF viewers; and external-PDF copy, collision
-rename, embed, save, and preview refresh. Failures attach a screen capture and
-UI Automation tree below `artifacts\ui-tests`; runner `.trx` files are stored in
-the same area.
-
+It requires an unlocked interactive Windows session. The project remains
+outside the cross-platform solution because FlaUI/UIA3 is Windows-specific.
 See
-[`tests\NoteManager.App.UiTests\README.md`](tests/NoteManager.App.UiTests/README.md)
-for the complete regression matrix, test-vault design, runner requirements, and
-guidance for adding scenarios.
+[`tests/NoteManager.Desktop.UiTests/README.md`](tests/NoteManager.Desktop.UiTests/README.md)
+for its user-visible search scenarios and failure artifacts.
 
-## Build the Windows installer
+The former WPF/FlaUI suite remains under `tests/NoteManager.App.UiTests` only as
+migration reference.
 
-Inno Setup 6 or 7 can package a self-contained, startup-optimized Release build:
+## Package a release for team sharing
+
+Run the release packager from the repository root on macOS. Supply a new
+three- or four-part numeric version for every release:
+
+```bash
+./installer/package-release.sh 1.2.0
+```
+
+The script runs the Release test suite, publishes self-contained macOS ARM64
+and Windows x64 applications, signs the macOS application bundle, and creates:
+
+```text
+installer/Output/NoteManager-1.2.0-osx-arm64.zip
+installer/Output/NoteManager-1.2.0-win-x64.zip
+installer/Output/NoteManager-1.2.0-SHA256SUMS.txt
+```
+
+Teammates can extract the appropriate archive and run `NoteManager.app` on
+macOS or `NoteManager.exe` on Windows. They do not need to install .NET.
+
+For Intel macOS or Windows on ARM64, override the default runtime identifiers:
+
+```bash
+./installer/package-release.sh 1.2.0 osx-x64 win-arm64
+```
+
+The script refuses to overwrite an existing release. For every subsequent
+release, choose the next version, run the same command, and verify the artifacts
+before sharing them:
+
+```bash
+cd installer/Output
+shasum -a 256 -c NoteManager-1.2.0-SHA256SUMS.txt
+```
+
+By default, the macOS app receives an ad-hoc signature suitable for internal
+team sharing. A release engineer can apply an installed Developer ID
+certificate by setting `NOTEMANAGER_CODESIGN_IDENTITY`:
+
+```bash
+NOTEMANAGER_CODESIGN_IDENTITY="Developer ID Application: Example Company (TEAMID)" \
+  ./installer/package-release.sh 1.2.0
+```
+
+Public macOS distribution additionally requires Apple's notarization process,
+which is intentionally outside this internal packaging script.
+
+## Build platform installers
+
+Inno Setup 6 or 7 can package a self-contained Avalonia Release build:
 
 ```powershell
 .\installer\build-installer.ps1
@@ -81,11 +114,17 @@ The finished artifact is written to:
 installer\Output\NoteManager-1.0.0-win-x64-Setup.exe
 ```
 
-Pass `-Version 1.2.0` to version a release. The publish enables composite
-ReadyToRun and disables tiered compilation, trimming, and single-file extraction
-to favor predictable WPF startup. See
-[`installer\README.md`](installer/README.md) for prerequisites, ARM64 builds, and
-unattended installation.
+Pass `-Version 1.2.0` to version a release. See
+[`installer\README.md`](installer/README.md) for prerequisites, ARM64 builds,
+team archives, and unattended installation.
+
+On macOS:
+
+```bash
+./installer/build-macos.sh 1.0.0 osx-arm64
+```
+
+Use `osx-x64` for Intel Macs.
 
 ## Included interactions
 
@@ -93,12 +132,15 @@ unattended installation.
 - Browse an alphabetized tag rail whose counts are calculated from the loaded Markdown files.
 - Select a tag to filter the middle pane by exact tag membership.
 - Use the virtual **All notes** and **Untagged** tags to show the complete vault or notes without tags.
-- Type in **Search notes** (or press `Ctrl+F`) to search titles, file names, tags, paths, and complete Markdown contents.
+- Type in **Search notes** (or press `Ctrl+F`) to search note file names, tags, relative paths, and complete Markdown contents using strict or best-match expressions described below.
 - Select a note to display its original Markdown source as plain, selectable text.
 - Edit Markdown directly; dirty notes are saved atomically when selecting another note or view, changing folders, publishing, or closing the application.
 - Drag one or more PDF files onto a note row or the Markdown editor to insert Obsidian `![[...]]` embeds. PDFs dropped from outside the open folder are copied to its root and receive `(1)`, `(2)`, and later suffixes when names collide.
-- View each Obsidian PDF transclusion in an interactive Edge PDF viewer below the Markdown source.
-- Use the PDF viewer's page navigation, scrolling, zoom, search, text selection, outline, print, save, and full-screen controls, or click **Open PDF** to use the default desktop application.
+- View each Obsidian PDF and PNG, JPG, JPEG, or BMP image transclusion beneath the Markdown source, in the same order as the embeds. Images are scaled to fit while preserving their aspect ratio.
+- Use the platform PDF viewer for scrolling, zooming, selection, printing, and
+  saving, or click **Open PDF** to use the default desktop application. Viewer
+  toolbar capabilities vary by operating system; PDF text-search parity is not
+  a migration requirement.
 - Click **Share** to open a public-link panel directly beneath the main toolbar button. Publishing sends the selected note and its embedded attachments to Infostacker, then copies the returned public URL to the clipboard.
 - Click **Create** (or press `Ctrl+N`) to create and select an empty `Untitled note.md` in the selected folder's root. Numbered names are used when needed.
 - Click **Delete**, then confirm the warning, to permanently remove the selected Markdown file from disk.
@@ -118,6 +160,161 @@ Opening a folder immediately loads the note and tag metadata, then updates a SQL
 The update runs on every startup and whenever **File → Open folder…** is used. Unchanged files are retained, changed or new Markdown files are reindexed, and deleted files are removed. Progress appears beside the note count. Searches are debounced while typing and begin returning results from completed batches even while a large first-time index is still being built.
 
 The database uses SQLite write-ahead logging so searches can read committed batches while indexing continues. Delete the selected folder's `.notes` directory at any time to force a complete rebuild; it contains no source notes and is excluded by the repository `.gitignore`.
+
+### How search works
+
+The index stores the file name, path relative to the opened folder, parsed
+tags, and complete Markdown source for every note. A Unicode FTS5 index handles
+word and prefix searches. A second punctuation-preserving trigram index
+handles phrases, paths, email addresses, versions, and other literal text.
+Matching is case-insensitive and diacritic-insensitive, so `café` can match
+`cafe`.
+
+NoteManager waits 250 milliseconds after the latest keystroke before searching,
+or you can press `Enter` to run the current expression immediately. A later
+keystroke, folder change, or shutdown cancels the older query. The last
+completed result remains visible while a new valid expression is running.
+Malformed expressions are not executed and produce a readable status message.
+A valid search with no matches clears the note list and displays **No notes
+found**. While the full-text index is being built, the search box is disabled
+and displays **Indexing in progress**. It becomes available when the status bar
+reports **Full-text ready**.
+
+The selected tag, **All notes**, or **Untagged** navigation filter remains in
+effect. Text search therefore searches within the current navigation scope,
+not outside it.
+
+#### Search modes
+
+An unqualified query is a strict search. Strict mode requires every adjacent
+term and shows the most recently modified matching note first:
+
+```text
+project plan
+all: project plan
+= project plan
+```
+
+`all:` and `=` are equivalent explicit strict-mode selectors.
+
+Best-match mode is selected with `best:` or `~`. Adjacent terms become
+alternatives, and notes matching the most distinct terms and strongest fields
+are displayed first:
+
+```text
+best: project plan
+~ project plan
+```
+
+Best match normally returns notes matching at least one positive term. Add `*`
+to include every note in the current navigation scope and place zero-score
+notes after relevant notes:
+
+```text
+~ * project plan
+```
+
+#### Terms, phrases, and operators
+
+Letter, number, and underscore terms are prefix searches. `plan` therefore
+matches `plan`, `plans`, and `planning`, with an exact word ranked above a
+prefix-only match.
+
+Text enclosed in double quotes is one contiguous phrase:
+
+```text
+"quarterly project plan"
+```
+
+Use two double quotes for a quote inside a phrase:
+
+```text
+"the ""approved"" plan"
+```
+
+The supported operators are:
+
+| Operator | Meaning |
+| --- | --- |
+| `AND` | Both operands must match |
+| `OR` | At least one operand must match |
+| `NOT` | Exclude the following operand |
+| `+term` | Require the following term or group |
+| `-term` | Short form of `NOT term` |
+| `( ... )` | Group an expression |
+| `*` | Include the complete current scope |
+
+Explicit operators have the same meaning in both search modes. Operator words
+are case-insensitive and are recognized only as complete, unquoted words.
+`NOT` and `-` exclusions apply to the complete expression.
+
+Examples:
+
+```text
+(invoice OR receipt) NOT draft
+~ +invoice paid -archived
+all: "project plan" AND approved
+```
+
+`NOT`, then `AND`, then `OR` is the operator precedence. Parentheses should be
+used whenever the intended grouping would otherwise be unclear.
+
+#### Search specific fields
+
+Prefix a term or phrase with a field operator to limit where it can match:
+
+| Field operator | Searches |
+| --- | --- |
+| `name:` | Note file name |
+| `tag:` | Parsed note tags |
+| `path:` | Path relative to the opened folder |
+| `body:` | Markdown source |
+
+Examples:
+
+```text
+name:"project plan"
+tag:active body:roadmap
+path:Clients/Acme
+~ +tag:active body:roadmap -path:archive/
+```
+
+`title:` is accepted as an alias for `name:`. Only these known field names are
+operators; other colon-containing text remains an ordinary search term.
+
+#### Literal symbols and paths
+
+A bare term containing punctuation is matched as a literal substring.
+Forward slash and backslash are ordinary searchable characters, not operators
+or escape characters:
+
+```text
+docs/search.md
+C:\Projects\NoteManager
+customer@example.com
+release-1.2
+```
+
+The slash direction is significant. On Windows, a relative path normally uses
+backslashes, while a forward-slash path can still match text in a note body.
+Quote literal text when it contains spaces.
+
+#### Relevance and note sorting
+
+Best-match scoring favors file-name matches, followed by tags, relative paths,
+and Markdown content. Matching more distinct positive terms provides the
+largest coverage advantage; phrases, exact words, and repeated occurrences
+provide additional ranking signals. Modification time is used only to break
+relevance ties.
+
+When a valid search result is accepted, the normal Title, Created, Updated,
+and Size sort selections are cleared and the sort button is disabled because
+the search mode controls ordering. Strict search uses modification time
+descending. Best match uses relevance descending. Clearing the search box
+restores the vault's saved normal sort selection and check mark.
+
+The complete grammar, ordering rules, implementation design, and acceptance
+criteria are documented in [`search.md`](search.md).
 
 ## Planned background Git synchronization
 
@@ -148,7 +345,7 @@ criteria, and comprehensive implementation checklist are specified in
 UI tests can opt into a current-user-only named pipe and change the folder in the running application without invoking the native picker:
 
 ```powershell
-dotnet run --project .\src\NoteManager.App\NoteManager.App.csproj -- `
+dotnet run --project .\src\NoteManager.Desktop\NoteManager.Desktop.csproj -- `
   --folder .\SampleNotes `
   --automation-pipe NoteManager.UiTest
 
@@ -160,7 +357,7 @@ dotnet run --project .\src\NoteManager.App\NoteManager.App.csproj -- `
 The pipe listener is disabled unless `--automation-pipe` is explicitly supplied. Both the injected startup path and runtime commands call the same `ChangeFolderAsync` path as the production folder picker.
 
 The FlaUI suite also uses an `import-pdf|<path>` automation command. It is
-available only when the opt-in pipe is enabled, is dispatched on the WPF UI
+available only when the opt-in pipe is enabled, is dispatched on the Avalonia UI
 thread, and calls the same PDF import path as a real drop. This makes collision,
 copy, embed, save, and viewer assertions deterministic without synthetic mouse
 input.
@@ -190,7 +387,7 @@ Following the [`taskscape/InfostackerPlugin`](https://github.com/taskscape/Infos
 1. Reads the selected Markdown file and prefixes it with the filename without `.md`.
 2. Resolves files referenced by Obsidian `![[...]]` embeds from the selected vault.
 3. Sends a multipart `POST` to `https://shr.infostacker.com/sharing/uploadmarkdownwithfiles` using the `markdown` field and repeated `files` fields.
-4. Reads the returned post `id`, constructs `https://shr.infostacker.com/sharing/{id}`, and copies it to the Windows clipboard.
+4. Reads the returned post `id`, constructs `https://shr.infostacker.com/sharing/{id}`, and copies it to the platform clipboard.
 
 The request is made only after the user presses the publish button. The note and combined attachments are checked against the plugin's 100 MB limit before upload. An unreadable attachment is skipped, matching the plugin behavior, while an unavailable service or rejected request is reported inside the Share panel.
 
@@ -214,7 +411,7 @@ The complete boundary behavior is exercised against a disposable vault:
 .\tests\Test-AutoSave.ps1 -Configuration Debug
 ```
 
-## Markdown metadata and PDF embeds
+## Markdown metadata and embedded media
 
 Tags can appear anywhere in a Markdown file using a YAML-style block:
 
@@ -247,13 +444,14 @@ The native dialog and tag-block rewrite have a disposable-vault UI test:
 It verifies the recent/all repository lists, lowercase display, validation,
 multi-tag entry, tag removal, immediate file saving, and one-block merge.
 
-An inline Obsidian PDF transclusion uses:
+An inline Obsidian PDF or image transclusion uses:
 
 ```markdown
 ![[Documents/Report.pdf]]
+![[assets/Pasted image 20250727091803.png]]
 ```
 
-Multiple transclusions are supported in one note. PDF targets may be absolute, relative to the note, relative to the vault root, or filename-only; filename-only links are resolved against the vault index. Viewers initialize as they approach the visible area so notes containing many PDFs remain responsive.
+Multiple PDF and PNG, JPG, JPEG, or BMP transclusions are supported in one note and appear beneath the editor in Markdown order. Targets may be absolute, relative to the note, relative to the vault root, or filename-only; filename-only links are resolved against the vault media index. Changes typed into the editor refresh the previews shortly after typing stops.
 
 ## Sample documents
 
@@ -268,19 +466,19 @@ These files contain synthetic business, research, invoice, receipt, parcel, and 
 ## Project structure
 
 ```text
+src/NoteManager.Core/
+  NoteManager.Core.csproj  platform-neutral models, services, and view model
+src/NoteManager.Desktop/
+  Controls/                Avalonia PDF viewer
+  Dialogs/                 cross-platform tag and confirmation dialogs
+  MainWindow.axaml          Avalonia three-pane desktop interface
+  Program.cs               Windows/macOS application entry point
 src/NoteManager.App/
-  Assets/          original synthetic PDF artwork
-  Controls/        note thumbnails and document preview UI
-  Infrastructure/ binding helpers and commands
-  Models/          tag-navigation and note models
-  Services/        Markdown loading, metadata/PDF parsing, SQLite FTS indexing, and sample generation
-  ViewModels/      folder loading, background indexing, full-text/tag filtering, and selection behavior
-  MainWindow.xaml  high-fidelity three-pane interface
+  Legacy WPF UI retained as migration reference; not in the portable solution
 tests/
-  NoteManager.App.Tests/     parser, editor, index, and PDF service tests
-  NoteManager.App.UiTests/   FlaUI/NUnit executable-level regression suite
-  Run-AllTests.ps1           serialized build, service, and UI entry point
-  Run-UiTests.ps1            focused UI runner with TRX and failure artifacts
+  NoteManager.App.Tests/     portable parser, editor, index, PDF, and view-model tests
+  NoteManager.Desktop.UiTests/ current Windows Avalonia search UI tests
+  NoteManager.App.UiTests/     legacy WPF FlaUI regression reference
 ```
 
 Visual comparison evidence and the final design review are documented in `design-qa.md`.

@@ -1,0 +1,496 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="using:NoteManager.Desktop.Controls"
+        xmlns:desktop="using:NoteManager.Desktop"
+        xmlns:icons="using:FluentIcons.Avalonia"
+        x:Class="NoteManager.Desktop.MainWindow"
+        Width="1480"
+        Height="940"
+        MinWidth="1040"
+        MinHeight="680"
+        Background="{DynamicResource AppBackgroundBrush}"
+        DragDrop.AllowDrop="True"
+        Title="NoteManager">
+  <Window.Resources>
+    <desktop:InverseBooleanConverter x:Key="NotBool" />
+  </Window.Resources>
+
+  <Grid RowDefinitions="Auto,66,*,36">
+    <Menu Background="{DynamicResource PanelBackgroundBrush}">
+      <MenuItem Header="_File">
+        <MenuItem Header="_New note"
+                  Command="{Binding NewNoteCommand}" />
+        <MenuItem Header="_Open folder…"
+                  Click="OpenFolder_OnClick" />
+        <MenuItem Header="_Import PDF…"
+                  Click="ImportPdf_OnClick" />
+        <Separator />
+        <MenuItem Header="E_xit"
+                  Click="Exit_OnClick" />
+      </MenuItem>
+      <MenuItem Header="_Edit">
+        <MenuItem Header="_Find notes"
+                  Click="Find_OnClick" />
+        <MenuItem Header="_Tags…"
+                  Click="Tags_OnClick" />
+      </MenuItem>
+      <MenuItem Header="_Note">
+        <MenuItem Header="_Publish public link"
+                  Click="Share_OnClick"
+                  IsEnabled="{Binding CanPublishSelectedNote}" />
+        <MenuItem Header="_Delete"
+                  Click="Delete_OnClick" />
+      </MenuItem>
+    </Menu>
+
+    <Border Grid.Row="1"
+            Padding="18,10"
+            Background="{DynamicResource PanelBackgroundBrush}"
+            BorderBrush="{DynamicResource BorderBrush}"
+            BorderThickness="0,0,0,1">
+      <Grid ColumnDefinitions="Auto,Auto,*,Auto"
+            ColumnSpacing="2">
+        <Button Classes="command"
+                Command="{Binding NewNoteCommand}">
+          <StackPanel Orientation="Horizontal" Spacing="9">
+            <icons:FluentIcon Icon="AddSquare"
+                              IconSize="Size20"
+                              Foreground="{DynamicResource AccentBrush}" />
+            <TextBlock VerticalAlignment="Center"
+                       Foreground="{DynamicResource AccentBrush}"
+                       Text="New note" />
+          </StackPanel>
+        </Button>
+        <Button Grid.Column="1"
+                Classes="command danger"
+                Click="Delete_OnClick"
+                IsEnabled="{Binding CanDeleteSelectedNote}">
+          <StackPanel Orientation="Horizontal" Spacing="9">
+            <icons:FluentIcon Icon="Delete" IconSize="Size20" />
+            <TextBlock VerticalAlignment="Center" Text="Delete" />
+          </StackPanel>
+        </Button>
+        <Border Grid.Column="2"
+                Margin="18,0"
+                Padding="12,7"
+                VerticalAlignment="Center"
+                Background="Transparent">
+          <TextBlock MaxWidth="420"
+                     Classes="secondary"
+                     FontSize="12"
+                     Text="{Binding CurrentFolderPath}"
+                     TextTrimming="CharacterEllipsis" />
+        </Border>
+
+        <Button x:Name="ShareToolbarButton"
+                Grid.Column="3"
+                Classes="command"
+                Click="Share_OnClick"
+                IsEnabled="{Binding CanPublishSelectedNote}">
+          <StackPanel Orientation="Horizontal" Spacing="9">
+            <icons:FluentIcon Icon="Share" IconSize="Size20" />
+            <TextBlock VerticalAlignment="Center" Text="Share" />
+          </StackPanel>
+        </Button>
+      </Grid>
+    </Border>
+
+    <Grid Grid.Row="2"
+          ColumnDefinitions="20*,4,27*,4,53*">
+      <Border Background="{DynamicResource RailBackgroundBrush}"
+              BorderBrush="{DynamicResource BorderBrush}"
+              BorderThickness="0,0,1,0">
+        <Grid Margin="20,22,16,18"
+              RowDefinitions="Auto,Auto,*">
+          <TextBlock Classes="section"
+                     Margin="8,0,0,8"
+                     Text="TAGS" />
+          <Button Grid.Row="1"
+                  Margin="0,0,0,10"
+                  HorizontalAlignment="Stretch"
+                  HorizontalContentAlignment="Left"
+                  Classes="command subtle"
+                  Command="{Binding ClearTagFilterCommand}">
+            <TextBlock VerticalAlignment="Center" Text="Show all notes" />
+          </Button>
+          <ListBox x:Name="NavigationList"
+                   Grid.Row="2"
+                   AutomationProperties.AutomationId="NavigationList"
+                   Classes="rail"
+                   ItemsSource="{Binding NavigationItems}"
+                   SelectedItem="{Binding SelectedNavigationItem, Mode=TwoWay}">
+            <ListBox.ItemTemplate>
+              <DataTemplate>
+                <Grid AutomationProperties.Name="{Binding Label}"
+                      ColumnDefinitions="*,Auto">
+                  <TextBlock Text="{Binding Label}"
+                             TextTrimming="CharacterEllipsis" />
+                  <TextBlock Grid.Column="1"
+                             Margin="12,0,0,0"
+                             Classes="secondary"
+                             Text="{Binding Count}" />
+                </Grid>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+        </Grid>
+      </Border>
+
+      <GridSplitter Grid.Column="1"
+                    ResizeDirection="Columns" />
+
+      <Border Grid.Column="2"
+              Background="{DynamicResource PanelBackgroundBrush}"
+              BorderBrush="{DynamicResource BorderBrush}"
+              BorderThickness="0,0,1,0">
+        <Grid Margin="18,22,14,16"
+              RowDefinitions="Auto,Auto,*">
+          <Grid Margin="6,0,6,12"
+                ColumnDefinitions="*,Auto,Auto">
+            <TextBlock FontSize="22"
+                       FontWeight="SemiBold"
+                       Text="{Binding CenterHeading}" />
+            <TextBlock x:Name="VisibleNoteCountText"
+                       Grid.Column="1"
+                       VerticalAlignment="Center"
+                       AutomationProperties.AutomationId="VisibleNoteCountText"
+                       Classes="secondary"
+                       Text="{Binding VisibleNoteCount}" />
+            <Button x:Name="SortNotesButton"
+                    Grid.Column="2"
+                    Margin="4,0,0,0"
+                    VerticalAlignment="Center"
+                    AutomationProperties.AutomationId="SortNotesButton"
+                    Classes="command icon"
+                    IsEnabled="{Binding CanSortNotes}"
+                    ToolTip.Tip="{Binding SortNotesToolTip}">
+              <Viewbox Width="20" Height="20">
+                <Canvas Width="24" Height="24">
+                  <Path Data="M5,3 L5,20 M1.5,16.5 L5,20 L8.5,16.5 M12,5 L22,5 M12,10 L19,10 M12,15 L16,15"
+                        Stroke="{DynamicResource TextSecondaryBrush}"
+                        StrokeLineCap="Round"
+                        StrokeThickness="1.6" />
+                </Canvas>
+              </Viewbox>
+              <Button.Flyout>
+                <MenuFlyout Placement="BottomEdgeAlignedRight">
+                  <MenuItem Header="Title"
+                            Command="{Binding SortNotesCommand}"
+                            CommandParameter="Title">
+                    <MenuItem.Icon>
+                      <TextBlock IsVisible="{Binding IsSortByTitle}"
+                                 Text="✓" />
+                    </MenuItem.Icon>
+                  </MenuItem>
+                  <MenuItem Header="Created"
+                            Command="{Binding SortNotesCommand}"
+                            CommandParameter="Created">
+                    <MenuItem.Icon>
+                      <TextBlock IsVisible="{Binding IsSortByCreated}"
+                                 Text="✓" />
+                    </MenuItem.Icon>
+                  </MenuItem>
+                  <MenuItem Header="Updated"
+                            Command="{Binding SortNotesCommand}"
+                            CommandParameter="Updated">
+                    <MenuItem.Icon>
+                      <TextBlock IsVisible="{Binding IsSortByUpdated}"
+                                 Text="✓" />
+                    </MenuItem.Icon>
+                  </MenuItem>
+                  <MenuItem Header="Size"
+                            Command="{Binding SortNotesCommand}"
+                            CommandParameter="Size">
+                    <MenuItem.Icon>
+                      <TextBlock IsVisible="{Binding IsSortBySize}"
+                                 Text="✓" />
+                    </MenuItem.Icon>
+                  </MenuItem>
+                </MenuFlyout>
+              </Button.Flyout>
+            </Button>
+          </Grid>
+
+          <Grid Grid.Row="1"
+                Margin="0,0,0,12">
+            <TextBox x:Name="SearchBox"
+                     Padding="38,8,54,8"
+                     AutomationProperties.AutomationId="SearchBox"
+                     AutomationProperties.Name="{Binding SearchPlaceholderText}"
+                     IsEnabled="{Binding IsSearchInputEnabled}"
+                     KeyDown="SearchBox_OnKeyDown"
+                     PlaceholderText="{Binding SearchPlaceholderText}"
+                     Text="{Binding SearchText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                     ToolTip.Tip="Use &quot;phrases&quot;, OR, -exclude, name:, tag:, path:, or body:. Prefix with ~ for best match." />
+            <icons:FluentIcon Margin="13,0,0,0"
+                              HorizontalAlignment="Left"
+                              VerticalAlignment="Center"
+                              IsHitTestVisible="False"
+                              Icon="Search"
+                              IconSize="Size16"
+                              Foreground="{DynamicResource TextTertiaryBrush}" />
+            <TextBlock Margin="0,0,12,0"
+                       HorizontalAlignment="Right"
+                       VerticalAlignment="Center"
+                       IsHitTestVisible="False"
+                       Classes="tertiary"
+                       FontSize="11"
+                       IsVisible="{Binding IsSearchInputEnabled}"
+                       Text="Ctrl/⌘ F" />
+            <ProgressBar Width="30"
+                         Height="3"
+                         Margin="0,0,12,0"
+                         HorizontalAlignment="Right"
+                         VerticalAlignment="Center"
+                         AutomationProperties.AutomationId="SearchProgress"
+                         AutomationProperties.Name="Searching notes"
+                         IsIndeterminate="True"
+                         IsVisible="{Binding IsSearching}" />
+          </Grid>
+
+          <Grid Grid.Row="2">
+            <ListBox x:Name="NotesList"
+                     AutomationProperties.AutomationId="NotesList"
+                     Classes="notes"
+                     ItemsSource="{Binding NotesView}"
+                     SelectedItem="{Binding SelectedNote, Mode=TwoWay}">
+              <ListBox.ItemTemplate>
+                <DataTemplate>
+                  <Border Padding="0,0,0,14"
+                          AutomationProperties.Name="{Binding Title}"
+                          BorderBrush="{DynamicResource BorderBrush}"
+                          BorderThickness="0,0,0,1">
+                    <StackPanel Spacing="5">
+                      <TextBlock FontSize="15"
+                                 FontWeight="SemiBold"
+                                 Text="{Binding Title}"
+                                 TextTrimming="CharacterEllipsis" />
+                      <TextBlock Classes="secondary"
+                                 FontSize="12"
+                                 Text="{Binding Subtitle}"
+                                 TextTrimming="CharacterEllipsis" />
+                      <Grid Margin="0,3,0,0"
+                            ColumnDefinitions="*,Auto">
+                        <TextBlock Classes="tertiary"
+                                   FontSize="11"
+                                   Text="{Binding ModifiedAt}" />
+                        <TextBlock Grid.Column="1"
+                                   Classes="tertiary"
+                                   FontSize="11"
+                                   Text="{Binding Size}" />
+                      </Grid>
+                    </StackPanel>
+                  </Border>
+                </DataTemplate>
+              </ListBox.ItemTemplate>
+            </ListBox>
+
+            <Border AutomationProperties.AutomationId="NoSearchResultsPanel"
+                    Background="{DynamicResource PanelBackgroundBrush}"
+                    IsVisible="{Binding HasNoSearchResults}">
+              <StackPanel HorizontalAlignment="Center"
+                          VerticalAlignment="Center"
+                          Spacing="6">
+                <TextBlock AutomationProperties.AutomationId="NoSearchResultsText"
+                           HorizontalAlignment="Center"
+                           FontSize="17"
+                           FontWeight="SemiBold"
+                           Text="No notes found" />
+                <TextBlock HorizontalAlignment="Center"
+                           Classes="secondary"
+                           Text="Try another search expression or clear the search box." />
+              </StackPanel>
+            </Border>
+          </Grid>
+        </Grid>
+      </Border>
+
+      <GridSplitter Grid.Column="3"
+                    ResizeDirection="Columns" />
+
+      <Border Grid.Column="4"
+              Background="{DynamicResource AppBackgroundBrush}">
+        <Grid Margin="24,22,24,18"
+              RowDefinitions="Auto,*">
+          <Grid Margin="2,0,2,0"
+                ColumnDefinitions="*,Auto">
+            <StackPanel>
+              <Grid>
+                <Button x:Name="SelectedNoteTitle"
+                        Classes="noteTitle"
+                        AutomationProperties.AutomationId="SelectedNoteTitle"
+                        AutomationProperties.Name="{Binding SelectedNote.Title}"
+                        Click="SelectedNoteTitle_OnClick"
+                        IsEnabled="{Binding CanDeleteSelectedNote}"
+                        ToolTip.Tip="Click to rename">
+                  <TextBlock FontSize="25"
+                             FontWeight="SemiBold"
+                             Text="{Binding SelectedNote.Title}"
+                             TextWrapping="Wrap" />
+                </Button>
+                <TextBox x:Name="SelectedNoteTitleEditor"
+                         MinHeight="0"
+                         Padding="3,1"
+                         VerticalContentAlignment="Center"
+                         Background="{DynamicResource SubtleSurfaceBrush}"
+                         BorderBrush="{DynamicResource StrongBorderBrush}"
+                         BorderThickness="1"
+                         CornerRadius="4"
+                         FontSize="25"
+                         FontWeight="SemiBold"
+                         AutomationProperties.AutomationId="SelectedNoteTitleEditor"
+                         IsVisible="False"
+                         KeyDown="SelectedNoteTitleEditor_OnKeyDown"
+                         LostFocus="SelectedNoteTitleEditor_OnLostFocus" />
+              </Grid>
+              <TextBlock Margin="0,5,0,0"
+                         Classes="secondary"
+                         Text="{Binding SelectedNote.Subtitle}"
+                         TextWrapping="Wrap" />
+            </StackPanel>
+            <Button Grid.Column="1"
+                    Classes="command"
+                    Command="{Binding OpenAttachmentCommand}"
+                    IsVisible="{Binding SelectedNote.IsMarkdownFile, Converter={StaticResource NotBool}}">
+              <StackPanel Orientation="Horizontal" Spacing="8">
+                <icons:FluentIcon Icon="Open" IconSize="Size20" />
+                <TextBlock VerticalAlignment="Center" Text="Open document" />
+              </StackPanel>
+            </Button>
+          </Grid>
+
+          <ScrollViewer Grid.Row="1"
+                        Margin="0,20,0,0"
+                        HorizontalScrollBarVisibility="Disabled"
+                        VerticalScrollBarVisibility="Auto">
+            <StackPanel Spacing="15">
+              <ItemsControl ItemsSource="{Binding SelectedNote.Tags}">
+                <ItemsControl.ItemsPanel>
+                  <ItemsPanelTemplate>
+                    <WrapPanel />
+                  </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <Border Margin="0,0,7,7"
+                            Padding="9,4"
+                            Background="{DynamicResource SelectionSurfaceBrush}"
+                            CornerRadius="12">
+                      <TextBlock Foreground="{DynamicResource AccentBrush}"
+                                 FontSize="11"
+                                 FontWeight="Medium"
+                                 Text="{Binding}" />
+                    </Border>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+
+              <StackPanel IsVisible="{Binding SelectedNote.IsMarkdownFile}">
+                <Border Classes="surface"
+                        Padding="8,6">
+                  <StackPanel>
+                    <Button Margin="0,0,0,5"
+                            HorizontalAlignment="Right"
+                            Classes="editorAction"
+                            Click="Tags_OnClick"
+                            IsEnabled="{Binding CanAssignTags}"
+                            ToolTip.Tip="Assign tags to this note">
+                      <StackPanel Orientation="Horizontal" Spacing="6">
+                        <icons:FluentIcon Icon="Tag"
+                                          IconSize="Size16" />
+                        <TextBlock VerticalAlignment="Center"
+                                   Text="Tags" />
+                      </StackPanel>
+                    </Button>
+                    <TextBox x:Name="MarkdownEditor"
+                             MinHeight="430"
+                             Padding="19,17"
+                             AcceptsReturn="True"
+                             Background="{DynamicResource PanelBackgroundBrush}"
+                             BorderBrush="{DynamicResource BorderBrush}"
+                             CornerRadius="7"
+                             FontFamily="avares://Avalonia.Fonts.Inter/Assets#Inter"
+                             FontSize="14"
+                             LineHeight="23"
+                             TextWrapping="Wrap"
+                             VerticalContentAlignment="Top"
+                             Text="{Binding SelectedNote.PlainTextContent, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                    <Button Margin="0,5,0,0"
+                            HorizontalAlignment="Right"
+                            Classes="editorAction"
+                            Click="ImportPdf_OnClick"
+                            IsEnabled="{Binding CanDeleteSelectedNote}"
+                            ToolTip.Tip="Insert PDF references into this note">
+                      <StackPanel Orientation="Horizontal" Spacing="6">
+                        <icons:FluentIcon Icon="DocumentPdf"
+                                          IconSize="Size16" />
+                        <TextBlock VerticalAlignment="Center"
+                                   Text="Import PDF" />
+                      </StackPanel>
+                    </Button>
+                  </StackPanel>
+                </Border>
+              </StackPanel>
+
+              <StackPanel IsVisible="{Binding SelectedNote.IsMarkdownFile, Converter={StaticResource NotBool}}">
+                <TextBlock Classes="section"
+                           Text="{Binding SelectedNote.DocumentHeading}" />
+                <TextBlock Margin="0,8,0,12"
+                           FontSize="18"
+                           FontWeight="SemiBold"
+                           Text="{Binding SelectedNote.DocumentSubheading}" />
+                <ItemsControl ItemsSource="{Binding SelectedNote.Paragraphs}">
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                      <TextBlock Margin="0,0,0,11"
+                                 LineHeight="22"
+                                 Text="{Binding}"
+                                 TextWrapping="Wrap" />
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </StackPanel>
+
+              <ItemsControl ItemsSource="{Binding SelectedNote.EmbeddedMediaReferences}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <controls:EmbeddedMediaViewer Margin="0,0,0,12"
+                                                  Media="{Binding}" />
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+
+            </StackPanel>
+          </ScrollViewer>
+        </Grid>
+      </Border>
+    </Grid>
+
+    <Border Grid.Row="3"
+            Padding="18,0"
+            Background="{DynamicResource PanelBackgroundBrush}"
+            BorderBrush="{DynamicResource BorderBrush}"
+            BorderThickness="0,1,0,0">
+      <Grid ColumnDefinitions="Auto,*,Auto"
+            ColumnSpacing="10">
+        <icons:FluentIcon VerticalAlignment="Center"
+                          Icon="CheckmarkCircle"
+                          IconSize="Size16"
+                          Foreground="{DynamicResource SuccessBrush}" />
+        <TextBlock Grid.Column="1"
+                   x:Name="StatusText"
+                   VerticalAlignment="Center"
+                   AutomationProperties.AutomationId="StatusText"
+                   FontSize="11"
+                   Text="{Binding StatusText}" />
+        <TextBlock Grid.Column="2"
+                   x:Name="SearchIndexStatusText"
+                   VerticalAlignment="Center"
+                   AutomationProperties.AutomationId="SearchIndexStatusText"
+                   Classes="secondary"
+                   FontSize="11"
+                   Text="{Binding SearchIndexStatus}" />
+      </Grid>
+    </Border>
+  </Grid>
+</Window>

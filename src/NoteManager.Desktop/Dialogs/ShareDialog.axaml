@@ -1,0 +1,70 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:desktop="using:NoteManager.Desktop"
+        xmlns:icons="using:FluentIcons.Avalonia"
+        x:Class="NoteManager.Desktop.Dialogs.ShareDialog"
+        Width="640"
+        Height="250"
+        CanResize="False"
+        Background="{DynamicResource AppBackgroundBrush}"
+        WindowStartupLocation="CenterOwner"
+        Title="Share note">
+  <Window.Resources>
+    <desktop:InverseBooleanConverter x:Key="NotBool" />
+  </Window.Resources>
+
+  <Grid RowDefinitions="*,Auto">
+    <Border Padding="28,26"
+            Background="{DynamicResource PanelBackgroundBrush}">
+      <Grid ColumnDefinitions="Auto,*"
+            ColumnSpacing="16">
+        <Border Width="44"
+                Height="44"
+                Background="{DynamicResource SelectionSurfaceBrush}"
+                CornerRadius="22">
+          <icons:FluentIcon HorizontalAlignment="Center"
+                            VerticalAlignment="Center"
+                            Icon="Share"
+                            IconSize="Size20"
+                            Foreground="{DynamicResource AccentBrush}" />
+        </Border>
+
+        <StackPanel Grid.Column="1"
+                    Spacing="6">
+          <TextBlock FontSize="22"
+                     FontWeight="SemiBold"
+                     Text="Publish public link" />
+          <TextBlock Classes="secondary"
+                     Text="Create a public link for the selected note and copy it to the clipboard."
+                     TextWrapping="Wrap" />
+          <TextBlock x:Name="ShareStatusText"
+                     Margin="0,8,0,0"
+                     Foreground="{DynamicResource AccentBrush}"
+                     Text="{Binding ShareStatusText}"
+                     TextWrapping="Wrap" />
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <Border Grid.Row="1"
+            Padding="24,16"
+            Background="{DynamicResource PanelBackgroundBrush}"
+            BorderBrush="{DynamicResource BorderBrush}"
+            BorderThickness="0,1,0,0">
+      <StackPanel HorizontalAlignment="Right"
+                  Orientation="Horizontal"
+                  Spacing="10">
+        <Button x:Name="CloseSharePanelButton"
+                Classes="command"
+                Click="Close_OnClick"
+                Content="Close"
+                IsEnabled="{Binding IsPublishing, Converter={StaticResource NotBool}}" />
+        <Button x:Name="PublishPublicLinkButton"
+                Classes="primary"
+                Click="Publish_OnClick"
+                Content="{Binding ShareActionText}"
+                IsEnabled="{Binding CanPublishSelectedNote}" />
+      </StackPanel>
+    </Border>
+  </Grid>
+</Window>

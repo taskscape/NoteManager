@@ -4,6 +4,10 @@ obj/
 artifacts/
 **/.notes/
 installer/publish/
+installer/publish-macos/
+installer/publish-windows/
 installer/Output/
 *.user
 *.suo
+**/.DS_Store
+SampleNotes

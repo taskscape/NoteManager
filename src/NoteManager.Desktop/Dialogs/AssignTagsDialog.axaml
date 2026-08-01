@@ -1,0 +1,87 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:icons="using:FluentIcons.Avalonia"
+        x:Class="NoteManager.Desktop.Dialogs.AssignTagsDialog"
+        Width="560"
+        Height="680"
+        MinHeight="520"
+        Background="{DynamicResource AppBackgroundBrush}"
+        WindowStartupLocation="CenterOwner"
+        Title="Assign tags">
+  <Grid RowDefinitions="Auto,*,Auto">
+    <Border Padding="24,21"
+            Background="{DynamicResource PanelBackgroundBrush}"
+            BorderBrush="{DynamicResource BorderBrush}"
+            BorderThickness="0,0,0,1">
+      <StackPanel Spacing="6">
+        <TextBlock FontSize="22"
+                   FontWeight="SemiBold"
+                   Text="Organize note" />
+        <TextBlock x:Name="HeadingText"
+                   Classes="secondary"
+                   TextWrapping="Wrap" />
+      </StackPanel>
+    </Border>
+
+    <Grid Grid.Row="1"
+          Margin="24,20"
+          RowDefinitions="Auto,*,Auto,Auto"
+          RowSpacing="13">
+      <Grid>
+        <TextBox x:Name="SearchBox"
+                 Padding="38,8,12,8"
+                 PlaceholderText="Filter tags"
+                 TextChanged="SearchBox_OnTextChanged" />
+        <icons:FluentIcon Margin="13,0,0,0"
+                          HorizontalAlignment="Left"
+                          VerticalAlignment="Center"
+                          IsHitTestVisible="False"
+                          Icon="Search"
+                          IconSize="Size16"
+                          Foreground="{DynamicResource TextTertiaryBrush}" />
+      </Grid>
+      <Border Grid.Row="1"
+              Classes="surface"
+              ClipToBounds="True">
+      <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <ItemsControl x:Name="TagItems">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate>
+              <CheckBox Margin="14,8"
+                        Content="{Binding Name}"
+                        IsChecked="{Binding IsSelected, Mode=TwoWay}" />
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </ScrollViewer>
+      </Border>
+      <StackPanel Grid.Row="2" Spacing="7">
+        <TextBlock Classes="section" Text="ADD NEW TAGS" />
+        <TextBox x:Name="NewTagsBox"
+                 PlaceholderText="Separate tags with spaces, commas, or semicolons" />
+      </StackPanel>
+      <TextBlock x:Name="ValidationText"
+                 Grid.Row="3"
+                 Foreground="{DynamicResource DangerBrush}"
+                 TextWrapping="Wrap" />
+    </Grid>
+
+    <Border Grid.Row="2"
+            Padding="24,16"
+            Background="{DynamicResource PanelBackgroundBrush}"
+            BorderBrush="{DynamicResource BorderBrush}"
+            BorderThickness="0,1,0,0">
+      <StackPanel
+                HorizontalAlignment="Right"
+                Orientation="Horizontal"
+                Spacing="10">
+      <Button Classes="command"
+              Click="Cancel_OnClick"
+              Content="Cancel" />
+      <Button Classes="primary"
+              Click="Save_OnClick"
+              Content="Save tags" />
+      </StackPanel>
+    </Border>
+  </Grid>
+</Window>

@@ -1,0 +1,35 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:icons="using:FluentIcons.Avalonia"
+             x:Class="NoteManager.Desktop.Controls.PdfViewer">
+  <Grid RowDefinitions="Auto,*"
+        Background="{DynamicResource AppBackgroundBrush}">
+    <Grid Margin="2,0,2,10" ColumnDefinitions="*,Auto">
+      <StackPanel Spacing="3">
+        <TextBlock x:Name="FileNameText"
+                   FontWeight="SemiBold"
+                   TextTrimming="CharacterEllipsis" />
+        <TextBlock x:Name="StatusText"
+                   Classes="secondary"
+                   FontSize="11"
+                   Text="Preparing PDF…" />
+      </StackPanel>
+      <Button Grid.Column="1"
+              Classes="command"
+              Click="OpenExternally_OnClick">
+        <StackPanel Orientation="Horizontal" Spacing="8">
+          <icons:FluentIcon Icon="Open" IconSize="Size16" />
+          <TextBlock VerticalAlignment="Center" Text="Open externally" />
+        </StackPanel>
+      </Button>
+    </Grid>
+    <Border Grid.Row="1"
+            Background="{DynamicResource PanelBackgroundBrush}"
+            BorderBrush="{DynamicResource BorderBrush}"
+            BorderThickness="1"
+            CornerRadius="8"
+            ClipToBounds="True">
+      <NativeWebView x:Name="WebView" />
+    </Border>
+  </Grid>
+</UserControl>

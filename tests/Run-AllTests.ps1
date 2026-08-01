@@ -37,6 +37,5 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 & (Join-Path $PSScriptRoot "Run-UiTests.ps1") `
-    -Configuration $Configuration `
-    -NoBuild
+    -Configuration $Configuration
 exit $LASTEXITCODE

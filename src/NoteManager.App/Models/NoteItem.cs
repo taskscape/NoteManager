@@ -20,9 +20,15 @@ public enum ThumbnailKind
 public sealed class NoteItem : ObservableObject
 {
     private string _title = string.Empty;
+    private string _fileName = string.Empty;
+    private string _sourceFilePath = string.Empty;
+    private string _size = string.Empty;
+    private string _modifiedAt = "26.07.2026 14:18";
     private string _plainTextContent = string.Empty;
-    private string[] _pdfReferences = [];
+    private EmbeddedMediaReference[] _embeddedMediaReferences = [];
     private string[] _tags = [];
+    private DateTime _updatedAt;
+    private long _sizeBytes;
     private bool _isDirty;
 
     public required string Title
@@ -32,8 +38,16 @@ public sealed class NoteItem : ObservableObject
     }
 
     public required string Subtitle { get; init; }
-    public required string FileName { get; init; }
-    public required string Size { get; init; }
+    public required string FileName
+    {
+        get => _fileName;
+        init => _fileName = value;
+    }
+    public required string Size
+    {
+        get => _size;
+        init => _size = value;
+    }
     public required string Date { get; init; }
     public required string Notebook { get; init; }
     public required ThumbnailKind ThumbnailKind { get; init; }
@@ -46,10 +60,29 @@ public sealed class NoteItem : ObservableObject
         init => _tags = value ?? [];
     }
     public string AttachmentDescription { get; init; } = "1 attachment";
-    public string ModifiedAt { get; init; } = "26.07.2026 14:18";
+    public string ModifiedAt
+    {
+        get => _modifiedAt;
+        init => _modifiedAt = value;
+    }
+    public DateTime CreatedAt { get; init; }
+    public DateTime UpdatedAt
+    {
+        get => _updatedAt;
+        init => _updatedAt = value;
+    }
+    public long SizeBytes
+    {
+        get => _sizeBytes;
+        init => _sizeBytes = value;
+    }
     public string GeneratedFilePath { get; set; } = string.Empty;
     public bool IsMarkdownFile { get; init; }
-    public string SourceFilePath { get; init; } = string.Empty;
+    public string SourceFilePath
+    {
+        get => _sourceFilePath;
+        init => _sourceFilePath = value;
+    }
     public string PlainTextContent
     {
         get => _plainTextContent;
@@ -83,6 +116,61 @@ public sealed class NoteItem : ObservableObject
 
     public void MarkSaved() => IsDirty = false;
 
+    public void UpdateFileIdentity(string fileName, string sourceFilePath)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(fileName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(sourceFilePath);
+
+        if (!_fileName.Equals(fileName, StringComparison.Ordinal))
+        {
+            _fileName = fileName;
+            OnPropertyChanged(nameof(FileName));
+            OnPropertyChanged(nameof(IsWordDocument));
+            OnPropertyChanged(nameof(AttachmentGlyph));
+            OnPropertyChanged(nameof(ListAttachmentText));
+        }
+
+        if (!_sourceFilePath.Equals(sourceFilePath, StringComparison.Ordinal))
+        {
+            _sourceFilePath = sourceFilePath;
+            OnPropertyChanged(nameof(SourceFilePath));
+        }
+
+        Title = fileName;
+        GeneratedFilePath = sourceFilePath;
+    }
+
+    public void UpdateFileMetadata(
+        string size,
+        long sizeBytes,
+        string modifiedAt,
+        DateTime updatedAt)
+    {
+        if (!_size.Equals(size, StringComparison.Ordinal))
+        {
+            _size = size;
+            OnPropertyChanged(nameof(Size));
+        }
+
+        if (_sizeBytes != sizeBytes)
+        {
+            _sizeBytes = sizeBytes;
+            OnPropertyChanged(nameof(SizeBytes));
+        }
+
+        if (!_modifiedAt.Equals(modifiedAt, StringComparison.Ordinal))
+        {
+            _modifiedAt = modifiedAt;
+            OnPropertyChanged(nameof(ModifiedAt));
+        }
+
+        if (_updatedAt != updatedAt)
+        {
+            _updatedAt = updatedAt;
+            OnPropertyChanged(nameof(UpdatedAt));
+        }
+    }
+
     public void ReplaceTags(IEnumerable<string> tags)
     {
         ArgumentNullException.ThrowIfNull(tags);
@@ -101,28 +189,43 @@ public sealed class NoteItem : ObservableObject
         OnPropertyChanged(nameof(Tags));
     }
 
-    public string[] PdfReferences
+    public EmbeddedMediaReference[] EmbeddedMediaReferences
     {
-        get => _pdfReferences;
-        init => _pdfReferences = value ?? [];
+        get => _embeddedMediaReferences;
+        init => _embeddedMediaReferences = value ?? [];
     }
 
-    public void AddPdfReferences(IEnumerable<string> paths)
+    public void AddEmbeddedMediaReferences(
+        IEnumerable<EmbeddedMediaReference> references)
     {
-        var updatedReferences = _pdfReferences
-            .Concat(paths)
-            .Where(path => !string.IsNullOrWhiteSpace(path))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
+        ArgumentNullException.ThrowIfNull(references);
+
+        var updatedReferences = _embeddedMediaReferences
+            .Concat(references)
+            .Where(reference => !string.IsNullOrWhiteSpace(reference.ResolvedPath))
             .ToArray();
-        if (_pdfReferences.SequenceEqual(
-            updatedReferences,
-            StringComparer.OrdinalIgnoreCase))
+        if (_embeddedMediaReferences.SequenceEqual(updatedReferences))
         {
             return;
         }
 
-        _pdfReferences = updatedReferences;
-        OnPropertyChanged(nameof(PdfReferences));
+        _embeddedMediaReferences = updatedReferences;
+        OnPropertyChanged(nameof(EmbeddedMediaReferences));
+    }
+
+    public void ReplaceEmbeddedMediaReferences(
+        IEnumerable<EmbeddedMediaReference> references)
+    {
+        ArgumentNullException.ThrowIfNull(references);
+
+        var updatedReferences = references.ToArray();
+        if (_embeddedMediaReferences.SequenceEqual(updatedReferences))
+        {
+            return;
+        }
+
+        _embeddedMediaReferences = updatedReferences;
+        OnPropertyChanged(nameof(EmbeddedMediaReferences));
     }
 
     public bool IsWordDocument => string.Equals(Path.GetExtension(FileName), ".docx", StringComparison.OrdinalIgnoreCase);

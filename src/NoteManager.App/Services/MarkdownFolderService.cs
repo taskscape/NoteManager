@@ -5,7 +5,8 @@ namespace NoteManager.App.Services;
 
 public sealed record MarkdownFolderLoadResult(
     IReadOnlyList<NoteItem> Notes,
-    int FailedFileCount);
+    int FailedFileCount,
+    EmbeddedMediaVaultIndex MediaIndex);
 
 public static class MarkdownFolderService
 {
@@ -33,7 +34,7 @@ public static class MarkdownFolderService
             .OrderByDescending(file => file.LastWriteTimeUtc)
             .ThenBy(file => file.FullName, StringComparer.OrdinalIgnoreCase)
             .ToArray();
-        var pdfIndex = PdfVaultIndex.Create(normalizedFolder, options);
+        var mediaIndex = EmbeddedMediaVaultIndex.Create(normalizedFolder, options);
 
         var notes = new List<NoteItem>(files.Length);
         var failedFileCount = 0;
@@ -42,7 +43,7 @@ public static class MarkdownFolderService
         {
             try
             {
-                notes.Add(CreateNote(normalizedFolder, file, pdfIndex));
+                notes.Add(CreateNote(normalizedFolder, file, mediaIndex));
             }
             catch (IOException)
             {
@@ -54,18 +55,17 @@ public static class MarkdownFolderService
             }
         }
 
-        return new MarkdownFolderLoadResult(notes, failedFileCount);
+        return new MarkdownFolderLoadResult(notes, failedFileCount, mediaIndex);
     }
 
-    private static NoteItem CreateNote(string rootFolder, FileInfo file, PdfVaultIndex pdfIndex)
+    private static NoteItem CreateNote(
+        string rootFolder,
+        FileInfo file,
+        EmbeddedMediaVaultIndex mediaIndex)
     {
         var markdown = File.ReadAllText(file.FullName);
         var tags = MarkdownMetadataParser.ParseTags(markdown);
-        var pdfReferences = MarkdownMetadataParser
-            .ParseInlinePdfEmbeds(markdown)
-            .Select(target => pdfIndex.Resolve(target, file.FullName))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
+        var mediaReferences = mediaIndex.ResolveAll(markdown, file.FullName);
         var relativePath = Path.GetRelativePath(rootFolder, file.FullName);
         var relativeFolder = Path.GetDirectoryName(relativePath);
         var subtitleParts = new List<string>();
@@ -98,11 +98,15 @@ public static class MarkdownFolderService
             DocumentSubheading = relativePath,
             Paragraphs = [],
             Tags = tags,
-            AttachmentDescription = pdfReferences.Length switch
+            CreatedAt = file.CreationTimeUtc,
+            UpdatedAt = file.LastWriteTimeUtc,
+            SizeBytes = file.Length,
+            AttachmentDescription = mediaReferences.Length switch
             {
                 0 => "Markdown note",
-                1 => "1 embedded PDF",
-                _ => $"{pdfReferences.Length:N0} embedded PDFs"
+                1 when mediaReferences[0].Kind == EmbeddedMediaKind.Pdf => "1 embedded PDF",
+                1 => "1 embedded image",
+                _ => $"{mediaReferences.Length:N0} embedded attachments"
             },
             ModifiedAt = modified.ToString("dd.MM.yyyy HH:mm"),
             GeneratedFilePath = file.FullName,
@@ -110,11 +114,11 @@ public static class MarkdownFolderService
             SourceFilePath = file.FullName,
             PlainTextContent = string.Empty,
             IsContentLoaded = false,
-            PdfReferences = pdfReferences
+            EmbeddedMediaReferences = mediaReferences
         };
     }
 
-    private static string FormatFileSize(long bytes)
+    public static string FormatFileSize(long bytes)
     {
         if (bytes < 1024)
         {
@@ -129,127 +133,4 @@ public static class MarkdownFolderService
         return $"{bytes / (1024d * 1024d):N1} MB";
     }
 
-    private sealed class PdfVaultIndex
-    {
-        private readonly string _rootFolder;
-        private readonly IReadOnlyDictionary<string, string> _relativePaths;
-        private readonly IReadOnlyDictionary<string, string[]> _fileNames;
-
-        private PdfVaultIndex(
-            string rootFolder,
-            IReadOnlyDictionary<string, string> relativePaths,
-            IReadOnlyDictionary<string, string[]> fileNames)
-        {
-            _rootFolder = rootFolder;
-            _relativePaths = relativePaths;
-            _fileNames = fileNames;
-        }
-
-        public static PdfVaultIndex Create(string rootFolder, EnumerationOptions options)
-        {
-            var pdfPaths = Directory
-                .EnumerateFiles(rootFolder, "*.pdf", options)
-                .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
-                .ToArray();
-
-            var relativePaths = pdfPaths
-                .GroupBy(
-                    path => NormalizeLinkPath(Path.GetRelativePath(rootFolder, path)),
-                    StringComparer.OrdinalIgnoreCase)
-                .ToDictionary(
-                    group => group.Key,
-                    group => group.First(),
-                    StringComparer.OrdinalIgnoreCase);
-
-            var fileNames = pdfPaths
-                .GroupBy(path => Path.GetFileName(path) ?? string.Empty, StringComparer.OrdinalIgnoreCase)
-                .ToDictionary(
-                    group => group.Key,
-                    group => group.ToArray(),
-                    StringComparer.OrdinalIgnoreCase);
-
-            return new PdfVaultIndex(rootFolder, relativePaths, fileNames);
-        }
-
-        public string Resolve(string rawTarget, string markdownFilePath)
-        {
-            try
-            {
-                return ResolveCore(rawTarget, markdownFilePath);
-            }
-            catch (Exception exception) when (
-                exception is ArgumentException
-                or NotSupportedException
-                or PathTooLongException
-                or UriFormatException)
-            {
-                return rawTarget.Trim();
-            }
-        }
-
-        private string ResolveCore(string rawTarget, string markdownFilePath)
-        {
-            var target = Uri.UnescapeDataString(rawTarget.Trim().Trim('<', '>', '"', '\''));
-            var windowsTarget = target.Replace('/', Path.DirectorySeparatorChar);
-
-            if (Path.IsPathRooted(windowsTarget))
-            {
-                return Path.GetFullPath(windowsTarget);
-            }
-
-            var noteFolder = Path.GetDirectoryName(markdownFilePath) ?? _rootFolder;
-            var isExplicitRelative = target.StartsWith("./", StringComparison.Ordinal)
-                                     || target.StartsWith("../", StringComparison.Ordinal)
-                                     || target.StartsWith(@".\", StringComparison.Ordinal)
-                                     || target.StartsWith(@"..\", StringComparison.Ordinal);
-            var containsFolder = target.Contains('/') || target.Contains('\\');
-            var noteRelative = Path.GetFullPath(Path.Combine(noteFolder, windowsTarget));
-            var vaultRelative = Path.GetFullPath(Path.Combine(_rootFolder, windowsTarget));
-
-            if (isExplicitRelative)
-            {
-                return noteRelative;
-            }
-
-            if (!containsFolder && File.Exists(noteRelative))
-            {
-                return noteRelative;
-            }
-
-            var normalizedTarget = NormalizeLinkPath(target);
-            if (_relativePaths.TryGetValue(normalizedTarget, out var indexedVaultPath))
-            {
-                return indexedVaultPath;
-            }
-
-            if (File.Exists(vaultRelative))
-            {
-                return vaultRelative;
-            }
-
-            var fileName = Path.GetFileName(windowsTarget);
-            if (_fileNames.TryGetValue(fileName, out var matches))
-            {
-                return matches
-                    .OrderBy(path => RelativeDistance(noteFolder, Path.GetDirectoryName(path) ?? _rootFolder))
-                    .ThenBy(path => path, StringComparer.OrdinalIgnoreCase)
-                    .First();
-            }
-
-            return containsFolder ? vaultRelative : noteRelative;
-        }
-
-        private static string NormalizeLinkPath(string path)
-            => path.Replace('\\', '/').TrimStart('/');
-
-        private static int RelativeDistance(string fromFolder, string toFolder)
-        {
-            var relative = Path.GetRelativePath(fromFolder, toFolder);
-            return relative
-                .Split(
-                    new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar },
-                    StringSplitOptions.RemoveEmptyEntries)
-                .Length;
-        }
-    }
 }
