@@ -1,5 +1,14 @@
 # Background note synchronization with Git
 
+> **Implementation status:** Git synchronization is now implemented as the
+> separately deployable `NoteManager.Plugin.GitIntegration` project. The
+> Avalonia host discovers its binary under `Plugins\GitIntegration` beside the
+> executable, and users activate it through **Tools → Plugins…**. Per-vault
+> activation, settings, and logs are stored below `.note\plugins`. The detailed
+> analysis below records the safety requirements that guided the implementation;
+> references to a future implementation, WPF dispatching, or application-folder
+> logs describe the earlier design and are superseded by the plugin host.
+
 ## Purpose
 
 NoteManager should synchronize the currently opened notes repository by using
@@ -118,9 +127,9 @@ Responsibilities:
 - `GitRepositoryInspector` determines whether the selected folder is a valid
   work-tree root, identifies the branch/upstream, and detects unfinished merge,
   rebase, cherry-pick, revert, or conflicted-index state.
-- `GitExclusionService` applies the dotted-directory rule, respects all
-  applicable `.gitignore` files, and identifies already tracked paths which
-  must be removed from the repository index.
+- `GitExclusionService` excludes new dot-prefixed paths, respects all applicable
+  `.gitignore` files, and preserves normal updates to paths already tracked in
+  the repository index.
 - `GitSynchronizationService` performs one deterministic pull-stage-commit-push
   cycle.
 - `GitSynchronizationCoordinator` owns scheduling, folder-generation
@@ -303,27 +312,23 @@ No staging, commit, or push may occur unless pull completed successfully.
 
 The exclusion policy has two independent parts.
 
-#### Dotted directories
+#### Dot-prefixed files and directories
 
-Any directory whose individual name starts with a dot is excluded at any
-depth, for example:
+Any new, untracked path containing a file or directory segment whose name starts
+with a dot is excluded at any depth, for example:
 
 ```text
 .notes/
 .git/
 .obsidian/
 projects/.cache/
+.env
+projects/.draft.md
 ```
 
-Ordinary dot-prefixed files are not excluded by this rule unless `.gitignore`
-also excludes them.
-
-Add a managed pattern to `.git/info/exclude`, bracketed by comments owned by
-NoteManager. A directory-only pattern such as `.*/` must be verified against
-the supported Git for Windows version for both root and nested directories.
-The staging command must also use an explicit exclude pathspec as defense in
-depth. Integration tests, rather than assumptions about glob semantics, are
-required.
+The staging command uses explicit exclusion pathspecs for root and nested dot
+files and directories. Integration tests verify this behavior against Git
+rather than approximating its pathspec semantics in application code.
 
 #### Existing `.gitignore` rules
 
@@ -339,44 +344,39 @@ a separate approximation of Git's ignore language.
 
 #### Already tracked excluded content
 
-Ignore rules do not affect files already tracked by Git. To satisfy the
-requirement that excluded paths are removed from the repository:
-
-1. enumerate tracked paths with `git ls-files -z`;
-2. identify paths below a dotted directory;
-3. enumerate tracked-but-ignored paths with
-   `git ls-files -ci --exclude-standard -z`;
-4. combine and deduplicate the path set;
-5. remove those paths from the index with `git rm --cached`, using
-   `--pathspec-from-file` and `--pathspec-file-nul` so unusual names remain
-   safe;
-6. leave the physical files untouched;
-7. include the index removals in the normal synchronization commit.
-
-This is a material repository change: a previously tracked `.github`,
-`.obsidian`, or other dotted directory will be deleted from the remote after
-the next push while remaining on the local disk. The application documentation
-and release notes must state this consequence clearly.
+The dot-path and `.gitignore` policies apply only to untracked content. A file
+that is already in the Git index remains managed even if its own name or one of
+its parent directory names begins with a dot. Its modifications and deletion
+must be staged, committed, and pushed normally. NoteManager must never run
+`git rm --cached` merely because a tracked path matches an exclusion rule.
 
 ### 4. Stage every eligible change
 
-Stage additions, modifications, renames, and deletions:
+First stage modifications and deletions for all already tracked paths, including
+tracked dot-prefixed and ignored paths:
 
 ```text
-git add -A -- . <explicit dotted-directory exclude pathspecs>
+git add -u -- .
 ```
 
-`-A` is required so deleted notes and renamed files are synchronized. Explicit
-dotted-directory exclusions take precedence over any negating `.gitignore`
-rule. After staging, verify the index:
+Then stage eligible additions while excluding root and nested dot-prefixed
+paths:
+
+```text
+git add -A -- . <explicit dot-file and dot-directory exclude pathspecs>
+```
+
+The first command preserves the normal lifecycle of tracked excluded paths. The
+second adds non-dot content while normal `.gitignore` rules continue to exclude
+new ignored files. After staging, verify the index:
 
 ```text
 git diff --cached --name-only -z
 ```
 
-No staged path may contain a dotted directory segment or be ignored according
-to the effective ignore rules. If validation fails, log it and stop before
-commit.
+A staged dot-prefixed or effectively ignored path is valid only when it was
+already present in the tracked-path snapshot taken before staging. If an
+untracked excluded path reaches the index, log it and stop before commit.
 
 ### 5. Commit when needed
 
@@ -517,19 +517,16 @@ replace fixing the required application-directory log permissions.
 
 ### Exclusions
 
-- [ ] Implement a path-segment predicate for directories beginning with `.`.
-- [ ] Add and maintain a clearly delimited NoteManager block in
-  `.git/info/exclude`.
-- [ ] Verify root and nested dotted-directory patterns against Git for Windows.
+- [ ] Implement a path-segment predicate for files or directories beginning with `.`.
+- [ ] Verify root and nested dot-file and dot-directory pathspecs against Git.
 - [ ] Use explicit exclude pathspecs in the staging command.
 - [ ] Delegate `.gitignore` evaluation to Git through standard add/check-ignore
   behavior.
-- [ ] Detect tracked files below dotted directories.
-- [ ] Detect tracked files made ignored by effective ignore rules.
-- [ ] Remove excluded tracked paths from the index without deleting local files.
-- [ ] Validate the staged index contains no prohibited path before commit.
-- [ ] Test nested `.gitignore`, negation rules, spaces, Unicode, and dotted
-  directories at multiple depths.
+- [ ] Snapshot tracked paths before staging.
+- [ ] Stage modifications and deletions to tracked excluded paths with `git add -u`.
+- [ ] Validate that every staged excluded path was already tracked.
+- [ ] Test nested `.gitignore`, negation rules, spaces, Unicode, and dot-prefixed
+  files and directories at multiple depths.
 
 ### Synchronization cycle
 
@@ -579,10 +576,10 @@ replace fixing the required application-directory log permissions.
   remote.
 - [ ] Prove non-Markdown eligible files are also committed, as required by
   "any other files."
-- [ ] Prove root and nested dotted directories never reach the remote.
+- [ ] Prove new root and nested dot-prefixed files and directories never reach the remote.
 - [ ] Prove root and nested `.gitignore` rules are respected.
-- [ ] Prove already tracked dotted/ignored content is removed from the index
-  but remains on disk.
+- [ ] Prove already tracked dot-prefixed/ignored content remains tracked and its
+  modifications and deletions reach the remote.
 - [ ] Prove no command runs for a non-repository folder.
 - [ ] Prove missing Git, missing upstream, missing author identity, rejected
   authentication, pull failure, commit failure, and push failure are logged.
@@ -602,7 +599,7 @@ replace fixing the required application-directory log permissions.
 ### Documentation and release
 
 - [ ] Add configuration and operational instructions to `README.md`.
-- [ ] Document the consequence of untracking existing dotted directories.
+- [ ] Document that exclusions affect only untracked content.
 - [ ] Explain how users resolve conflicts and where daily logs are located.
 - [ ] Document that NoteManager does not configure repositories, remotes,
   credentials, author identity, or trust.
@@ -618,10 +615,10 @@ The feature is ready when all of the following are true:
 2. Each new cycle starts only after the configured number of minutes has
    elapsed since the previous cycle's final Git command exited.
 3. Non-repository folders cause no pull, stage, commit, or push.
-4. No file below a dotted directory and no effectively ignored file is added
-   to a synchronization commit.
-5. Previously tracked excluded content is removed from the repository while
-   remaining on the local disk.
+4. No new dot-prefixed or effectively ignored path is added to a synchronization
+   commit.
+5. Previously tracked excluded content remains tracked, and subsequent changes
+   or deletions are committed and pushed normally.
 6. Pull always succeeds before NoteManager stages, commits, or pushes current
    working-tree changes.
 7. Conflicts and every Git command failure stop the cycle, preserve user data,
@@ -631,4 +628,3 @@ The feature is ready when all of the following are true:
 9. A failed push preserves its local commit and a later cycle can recover.
 10. Automated unit, integration, scheduler, UI-responsiveness, and installed
     logging tests all pass.
-

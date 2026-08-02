@@ -10,6 +10,14 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NoteManager.Core", "src\Not
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NoteManager.Desktop", "src\NoteManager.Desktop\NoteManager.Desktop.csproj", "{BE8B426F-D536-46C6-8297-768A80CB59F3}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NoteManager.Plugin.GitIntegration", "src\NoteManager.Plugin.GitIntegration\NoteManager.Plugin.GitIntegration.csproj", "{88A97E46-52C8-47F9-B454-3613A2569448}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NoteManager.Plugin.GitIntegration.Tests", "tests\NoteManager.Plugin.GitIntegration.Tests\NoteManager.Plugin.GitIntegration.Tests.csproj", "{956601CB-EF17-42C8-8760-76F64C585A54}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NoteManager.Plugin.DocumentConversion", "src\NoteManager.Plugin.DocumentConversion\NoteManager.Plugin.DocumentConversion.csproj", "{585E5F27-BFCA-41D1-A982-D2D2FBA718E8}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NoteManager.Plugin.DocumentConversion.Tests", "tests\NoteManager.Plugin.DocumentConversion.Tests\NoteManager.Plugin.DocumentConversion.Tests.csproj", "{F0C1D514-DB89-4CC2-A5CF-A367F45E4C3E}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -28,9 +36,27 @@ Global
 		{BE8B426F-D536-46C6-8297-768A80CB59F3}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{BE8B426F-D536-46C6-8297-768A80CB59F3}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{BE8B426F-D536-46C6-8297-768A80CB59F3}.Release|Any CPU.Build.0 = Release|Any CPU
+		{88A97E46-52C8-47F9-B454-3613A2569448}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{88A97E46-52C8-47F9-B454-3613A2569448}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{88A97E46-52C8-47F9-B454-3613A2569448}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{88A97E46-52C8-47F9-B454-3613A2569448}.Release|Any CPU.Build.0 = Release|Any CPU
+		{956601CB-EF17-42C8-8760-76F64C585A54}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{956601CB-EF17-42C8-8760-76F64C585A54}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{956601CB-EF17-42C8-8760-76F64C585A54}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{956601CB-EF17-42C8-8760-76F64C585A54}.Release|Any CPU.Build.0 = Release|Any CPU
+		{585E5F27-BFCA-41D1-A982-D2D2FBA718E8}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{585E5F27-BFCA-41D1-A982-D2D2FBA718E8}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{585E5F27-BFCA-41D1-A982-D2D2FBA718E8}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{585E5F27-BFCA-41D1-A982-D2D2FBA718E8}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F0C1D514-DB89-4CC2-A5CF-A367F45E4C3E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F0C1D514-DB89-4CC2-A5CF-A367F45E4C3E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F0C1D514-DB89-4CC2-A5CF-A367F45E4C3E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F0C1D514-DB89-4CC2-A5CF-A367F45E4C3E}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{C5655CB1-54E2-473E-A47A-0E8C2E4409C4} = {40AE1BBE-BA69-42C4-AE41-B9C79190BA46}
 		{BE8B426F-D536-46C6-8297-768A80CB59F3} = {40AE1BBE-BA69-42C4-AE41-B9C79190BA46}
+		{88A97E46-52C8-47F9-B454-3613A2569448} = {40AE1BBE-BA69-42C4-AE41-B9C79190BA46}
+		{585E5F27-BFCA-41D1-A982-D2D2FBA718E8} = {40AE1BBE-BA69-42C4-AE41-B9C79190BA46}
 	EndGlobalSection
 EndGlobal

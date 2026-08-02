@@ -6,10 +6,15 @@ macOS.
 
 ## Configuration
 
-- .NET SDK 8.0.423
+- Target framework: .NET 8 (`net8.0`)
+- Current repository SDK: .NET SDK 10.0.302, selected by `global.json`
 - Avalonia 12.0.0
 - `Avalonia.Controls.WebView` 12.0.0
-- Test document: `SampleNotes/documents/orbital-guide.pdf`
+- Test document: `spikes/AvaloniaPdfSpike/Assets/orbital-guide.pdf`
+
+The macOS results below were originally recorded with .NET SDK 8.0.423. The
+current repository SDK can build the spike's `net8.0` target, but the results
+should not be interpreted as a fresh macOS verification under SDK 10.0.302.
 
 ## Verified on macOS
 

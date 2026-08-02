@@ -41,6 +41,11 @@
         <MenuItem Header="_Delete"
                   Click="Delete_OnClick" />
       </MenuItem>
+      <MenuItem Header="_Tools">
+        <MenuItem Header="_Plugins…"
+                  AutomationProperties.AutomationId="PluginsMenuItem"
+                  Click="Plugins_OnClick" />
+      </MenuItem>
     </Menu>
 
     <Border Grid.Row="1"

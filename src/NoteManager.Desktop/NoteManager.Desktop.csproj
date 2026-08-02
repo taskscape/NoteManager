@@ -25,5 +25,32 @@
 
   <ItemGroup>
     <ProjectReference Include="..\NoteManager.Core\NoteManager.Core.csproj" />
+    <ProjectReference Include="..\NoteManager.Plugin.DocumentConversion\NoteManager.Plugin.DocumentConversion.csproj"
+                      ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\NoteManager.Plugin.GitIntegration\NoteManager.Plugin.GitIntegration.csproj"
+                      ReferenceOutputAssembly="false" />
   </ItemGroup>
+
+  <Target Name="PublishBundledPlugins" AfterTargets="Publish">
+    <ItemGroup>
+      <BundledPluginFile Include="..\NoteManager.Plugin.GitIntegration\bin\$(Configuration)\net10.0\NoteManager.Plugin.GitIntegration.dll" />
+      <BundledPluginFile Include="..\NoteManager.Plugin.GitIntegration\bin\$(Configuration)\net10.0\NoteManager.Plugin.GitIntegration.pdb"
+                         Condition="Exists('..\NoteManager.Plugin.GitIntegration\bin\$(Configuration)\net10.0\NoteManager.Plugin.GitIntegration.pdb')" />
+      <BundledDocumentConversionPluginFile Include="..\NoteManager.Plugin.DocumentConversion\bin\$(Configuration)\net10.0\NoteManager.Plugin.DocumentConversion.dll" />
+      <BundledDocumentConversionPluginFile Include="..\NoteManager.Plugin.DocumentConversion\bin\$(Configuration)\net10.0\NoteManager.Plugin.DocumentConversion.pdb"
+                                            Condition="Exists('..\NoteManager.Plugin.DocumentConversion\bin\$(Configuration)\net10.0\NoteManager.Plugin.DocumentConversion.pdb')" />
+      <BundledDocumentConversionAsset Include="..\NoteManager.Plugin.DocumentConversion\bin\$(Configuration)\net10.0\Assets\**\*" />
+    </ItemGroup>
+    <MakeDir Directories="$(PublishDir)Plugins\GitIntegration" />
+    <Copy SourceFiles="@(BundledPluginFile)"
+          DestinationFolder="$(PublishDir)Plugins\GitIntegration"
+          SkipUnchangedFiles="true" />
+    <MakeDir Directories="$(PublishDir)Plugins\DocumentConversion" />
+    <Copy SourceFiles="@(BundledDocumentConversionPluginFile)"
+          DestinationFolder="$(PublishDir)Plugins\DocumentConversion"
+          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(BundledDocumentConversionAsset)"
+          DestinationFiles="@(BundledDocumentConversionAsset->'$(PublishDir)Plugins\DocumentConversion\Assets\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+  </Target>
 </Project>

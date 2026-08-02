@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>NoteManager.Plugin.GitIntegration</AssemblyName>
+    <RootNamespace>NoteManager.Plugin.GitIntegration</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\NoteManager.Core\NoteManager.Core.csproj" />
+  </ItemGroup>
+
+  <Target Name="DeployPluginBesideDesktop" AfterTargets="Build">
+    <PropertyGroup>
+      <PluginDeploymentDirectory>$(MSBuildThisFileDirectory)..\NoteManager.Desktop\bin\$(Configuration)\net10.0\Plugins\GitIntegration</PluginDeploymentDirectory>
+    </PropertyGroup>
+    <MakeDir Directories="$(PluginDeploymentDirectory)" />
+    <Copy SourceFiles="$(TargetPath)"
+          DestinationFolder="$(PluginDeploymentDirectory)"
+          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(TargetDir)$(TargetName).pdb"
+          DestinationFolder="$(PluginDeploymentDirectory)"
+          SkipUnchangedFiles="true"
+          Condition="Exists('$(TargetDir)$(TargetName).pdb')" />
+  </Target>
+</Project>

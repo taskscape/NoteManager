@@ -10,7 +10,7 @@ Run it from an unlocked interactive Windows session:
 .\tests\Run-UiTests.ps1 -Configuration Debug
 ```
 
-The six scenarios verify:
+The suite verifies:
 
 - a large-vault index build disables search with an indexing message until ready;
 - physical typing followed by Enter, zero results, and the visible empty state;
@@ -18,7 +18,9 @@ The six scenarios verify:
   literal slash matching, and exclusions;
 - best-match implicit `OR`, relevance ordering, `+`, `-`, and `*`;
 - search-owned sorting, invalid-expression retention, and clearing search;
-- composition of tag navigation and full-text search.
+- composition of tag navigation and full-text search;
+- physical note-title renaming behavior; and
+- Tools → Plugins discovery plus vault-local Git Integration activation.
 
 Each scenario creates a disposable vault and waits for the real background
 index to report **Full-text ready**. Failures write a screenshot, UI Automation

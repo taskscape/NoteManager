@@ -46,14 +46,19 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     public MainViewModel(
         InfostackerPublishingService? infostackerPublishingService = null)
+        : this(infostackerPublishingService, useSampleDataForTesting: false)
+    {
+    }
+
+    private MainViewModel(
+        InfostackerPublishingService? infostackerPublishingService,
+        bool useSampleDataForTesting)
     {
         _infostackerPublishingService =
             infostackerPublishingService ?? new InfostackerPublishingService();
         _allNotes = new RangeObservableCollection<NoteItem>();
         _visibleNotes = new RangeObservableCollection<NoteItem>();
-        _allNotes.ReplaceRange(SampleDataService.CreateNotes());
         NavigationItems = [];
-        RebuildTagNavigation();
 
         NewNoteCommand = new AsyncRelayCommand(_ => CreateNewNoteAsync(), _ => CanCreateNote);
         ClearTagFilterCommand = new RelayCommand(_ => ClearTagFilter());
@@ -76,10 +81,23 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         ViewModeCommand = new RelayCommand(
             parameter => ChangeView(parameter?.ToString() ?? "View updated"));
 
-        _visibleNotes.ReplaceRange(SortNotes(_allNotes));
-        SelectedNote = _allNotes.First(note => note.ThumbnailKind == ThumbnailKind.SpacePoster);
-        SampleDocumentService.EnsureAll(_allNotes);
+        if (useSampleDataForTesting)
+        {
+            _allNotes.ReplaceRange(SampleDataService.CreateNotes());
+            RebuildTagNavigation();
+            _visibleNotes.ReplaceRange(SortNotes(_allNotes));
+            SelectedNote = _allNotes.FirstOrDefault(
+                note => note.ThumbnailKind == ThumbnailKind.SpacePoster);
+        }
     }
+
+    /// <summary>
+    /// Creates a view model populated with the design samples for tests that
+    /// need representative note data without opening a user folder.
+    /// </summary>
+    public static MainViewModel CreateWithSampleDataForTesting(
+        InfostackerPublishingService? infostackerPublishingService = null)
+        => new(infostackerPublishingService, useSampleDataForTesting: true);
 
     public ObservableCollection<NavigationItem> NavigationItems { get; }
     public ObservableCollection<NoteItem> NotesView => _visibleNotes;

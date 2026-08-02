@@ -76,6 +76,64 @@ internal sealed class NoteManagerAppSession : IDisposable
             $"automation id '{automationId}'",
             timeout);
 
+    public Window WaitForWindow(string title, TimeSpan? timeout = null)
+        => UiWait.UntilNotNull(
+            () => FindTopLevelWindow(title),
+            $"window '{title}'",
+            timeout);
+
+    public CheckBox OpenPluginsDialog(string pluginName)
+    {
+        var tools = UiWait.UntilNotNull(
+            () => MainWindow
+                .FindFirstDescendant(conditionFactory =>
+                    conditionFactory.ByName("Tools"))
+                ?.AsMenuItem(),
+            "Tools menu");
+        tools.Click();
+        var plugins = UiWait.UntilNotNull(
+            () => _automation
+                .GetDesktop()
+                .FindFirstDescendant(conditionFactory =>
+                    conditionFactory
+                        .ByControlType(ControlType.MenuItem)
+                        .And(conditionFactory.ByName("Plugins…")))
+                ?.AsMenuItem(),
+            "Plugins menu item");
+        plugins.Click();
+        return UiWait.UntilNotNull(
+            () => _automation
+                .GetDesktop()
+                .FindFirstDescendant(conditionFactory =>
+                    conditionFactory
+                        .ByAutomationId("PluginActivationToggle")
+                        .And(conditionFactory.ByName(pluginName)))
+                ?.AsCheckBox(),
+            $"plugin activation toggle '{pluginName}'");
+    }
+
+    public AutomationElement WaitForDesktopByAutomationId(
+        string automationId,
+        TimeSpan? timeout = null)
+        => UiWait.UntilNotNull(
+            () => _automation
+                .GetDesktop()
+                .FindFirstDescendant(conditionFactory =>
+                    conditionFactory.ByAutomationId(automationId)),
+            $"desktop automation id '{automationId}'",
+            timeout);
+
+    public AutomationElement WaitForDesktopByName(
+        string name,
+        TimeSpan? timeout = null)
+        => UiWait.UntilNotNull(
+            () => _automation
+                .GetDesktop()
+                .FindFirstDescendant(conditionFactory =>
+                    conditionFactory.ByName(name)),
+            $"desktop element named '{name}'",
+            timeout);
+
     public void SetSearchText(string value)
     {
         var searchBox = WaitForByAutomationId("SearchBox").AsTextBox();
@@ -266,6 +324,20 @@ internal sealed class NoteManagerAppSession : IDisposable
 
         return element?.AsListBoxItem();
     }
+
+    private Window? FindTopLevelWindow(string title)
+        => _application
+               .GetAllTopLevelWindows(_automation)
+               .FirstOrDefault(window => window.Name.Equals(
+                   title,
+                   StringComparison.Ordinal))
+           ?? _automation
+               .GetDesktop()
+               .FindFirstChild(conditionFactory =>
+                   conditionFactory
+                       .ByControlType(ControlType.Window)
+                       .And(conditionFactory.ByName(title)))
+               ?.AsWindow();
 
     private static string ReadAutomationProperty(
         Func<string> read,

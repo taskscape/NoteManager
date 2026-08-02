@@ -1,0 +1,72 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="NoteManager.Desktop.Dialogs.PluginsDialog"
+        Width="680"
+        Height="460"
+        MinWidth="560"
+        MinHeight="360"
+        CanResize="True"
+        ShowInTaskbar="False"
+        Title="Plugins"
+        WindowStartupLocation="CenterOwner">
+  <Grid Margin="24" RowDefinitions="Auto,Auto,*,Auto" RowSpacing="14">
+    <TextBlock FontSize="24"
+               FontWeight="SemiBold"
+               Text="Plugins" />
+    <StackPanel Grid.Row="1" Spacing="4">
+      <TextBlock Text="Activate optional functionality for the current notes folder." />
+      <TextBlock x:Name="VaultPathText"
+                 AutomationProperties.AutomationId="PluginVaultPath"
+                 Classes="secondary"
+                 TextWrapping="Wrap" />
+    </StackPanel>
+
+    <ScrollViewer Grid.Row="2">
+      <ItemsControl x:Name="PluginItems">
+        <ItemsControl.ItemTemplate>
+          <DataTemplate>
+            <Border Margin="0,0,0,10"
+                    Padding="16"
+                    BorderBrush="{DynamicResource BorderBrush}"
+                    BorderThickness="1"
+                    CornerRadius="8">
+              <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="14">
+                <CheckBox VerticalAlignment="Center"
+                          AutomationProperties.AutomationId="PluginActivationToggle"
+                          AutomationProperties.Name="{Binding Name}"
+                          IsChecked="{Binding IsEnabled, Mode=OneWay}"
+                          IsEnabled="{Binding CanChangeActivation}"
+                          Click="PluginActivation_OnClick" />
+                <StackPanel Grid.Column="1" Spacing="4">
+                  <StackPanel Orientation="Horizontal" Spacing="8">
+                    <TextBlock FontSize="16"
+                               FontWeight="SemiBold"
+                               Text="{Binding Name}" />
+                    <TextBlock VerticalAlignment="Center"
+                               Classes="secondary"
+                               Text="{Binding Version}" />
+                  </StackPanel>
+                  <TextBlock Text="{Binding Description}"
+                             TextWrapping="Wrap" />
+                </StackPanel>
+                <TextBlock Grid.Column="2"
+                           VerticalAlignment="Center"
+                           AutomationProperties.AutomationId="PluginStatus"
+                           Classes="secondary"
+                           Text="{Binding Status}" />
+              </Grid>
+            </Border>
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+      </ItemsControl>
+    </ScrollViewer>
+
+    <Button Grid.Row="3"
+            HorizontalAlignment="Right"
+            MinWidth="96"
+            AutomationProperties.AutomationId="ClosePluginsButton"
+            IsDefault="True"
+            Click="Close_OnClick"
+            Content="Close" />
+  </Grid>
+</Window>

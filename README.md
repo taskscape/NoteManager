@@ -12,20 +12,24 @@ From the repository root on Windows or macOS:
 dotnet run --project src/NoteManager.Desktop/NoteManager.Desktop.csproj
 ```
 
-The repository pins the .NET 10 SDK through `global.json`. On startup, the application recursively loads the Obsidian vault at:
-
-```text
-SampleNotes
-```
-
-Use **File → Open folder…**, `Ctrl+O` on Windows, or `Command+O` on macOS to
-switch to another Markdown folder.
+The repository pins the .NET 10 SDK through `global.json`. On startup, the
+application opens the folder supplied with `--folder`, or the last folder that
+was opened successfully. If neither is available, use **File → Open folder…**,
+`Ctrl+O` on Windows, or `Command+O` on macOS to select an Obsidian vault or
+another folder containing Markdown notes.
 
 For a dialog-free automated launch, inject the startup folder:
 
 ```bash
 dotnet run --project src/NoteManager.Desktop/NoteManager.Desktop.csproj -- \
-  --folder SampleNotes
+  --folder /path/to/your/vault
+```
+
+On Windows PowerShell, a typical invocation is:
+
+```powershell
+dotnet run --project .\src\NoteManager.Desktop\NoteManager.Desktop.csproj -- `
+  --folder C:\Notes\MyVault
 ```
 
 ## Automated regression tests
@@ -50,7 +54,9 @@ See
 for its user-visible search scenarios and failure artifacts.
 
 The former WPF/FlaUI suite remains under `tests/NoteManager.App.UiTests` only as
-migration reference.
+migration reference. The adjacent `tests/Test-*.ps1` scripts that launch
+`NoteManager.App` belong to that legacy suite and are not current Avalonia test
+commands.
 
 ## Package a release for team sharing
 
@@ -316,42 +322,110 @@ restores the vault's saved normal sort selection and check mark.
 The complete grammar, ordering rules, implementation design, and acceptance
 criteria are documented in [`search.md`](search.md).
 
-## Planned background Git synchronization
+## Document Conversion plugin
 
-The planned synchronization feature assumes Git for Windows is installed and
-the selected folder is already the root of a configured repository with a
-current branch, upstream remote, author identity, credentials, and trust
-settings.
+Automatic document-to-Markdown conversion is supplied as an optional plugin.
+Open a notes folder, choose **Tools → Plugins…**, and select **Document
+Conversion**. Activation is stored per vault in
+`<vault>\.note\plugins\activated.json`. The plugin creates its configuration
+and daily log files below:
 
-For a valid repository, NoteManager will run a non-overlapping background cycle
-at a configurable interval (five minutes by default): save the active note,
-pull remote changes, stage and commit every eligible local change, and push to
-the configured upstream. The next interval begins only after the preceding
-cycle's final Git command exits. A folder that is not Git-versioned remains
-idle.
+```text
+<vault>\.note\plugins\document-conversion
+```
 
-Folders whose names begin with a dot are excluded at every depth, and effective
-root/nested `.gitignore` rules are respected. Git failures and conflicts stop
-the cycle without automatic conflict resolution and are written to daily text
-logs in the application directory, retained for one calendar month.
+Activation starts one scan immediately and schedules later scans every five
+minutes. Each scan asks the packaged DOC2MD CLI to search the whole vault for
+PDF, Word, spreadsheet, presentation, RTF, OpenDocument, text, HTML, and EPUB
+files. A source is converted only when the sibling path produced by replacing
+its extension with `.md` does not already exist. The plugin never passes
+DOC2MD's `--overwrite` option, so an existing Markdown counterpart is not
+changed.
 
-The command sequence, exclusion rules, configuration schema, concurrency
-design, logging format, installer change, conflict behavior, acceptance
-criteria, and comprehensive implementation checklist are specified in
-[`synchronization.md`](synchronization.md).
+The generated `settings.json` uses recursive conversion, local PDF processing,
+and `eng+pol` OCR by default. It also contains optional paths for DOC2MD.Cli,
+MarkItDown, LibreOffice, and Tesseract trained data. Deactivate the plugin before
+editing that file, then reactivate it to load the changes. Legacy Office and
+OpenDocument inputs require LibreOffice. Image-only PDF pages require the
+requested Tesseract language data. The default MarkItDown command points to the
+local DOC2MD environment under
+`C:\Projects\DOC2MD\.markitdown-venv\Scripts\markitdown.exe`.
+
+The compiled CLI deployment and its Windows x64 native dependencies are kept
+under `src/NoteManager.Plugin.DocumentConversion/Assets/DOC2MD.Cli`. Building
+the plugin deploys its assembly and those assets to:
+
+```text
+src\NoteManager.Desktop\bin\<Configuration>\net10.0\Plugins\DocumentConversion
+```
+
+Published application output contains the same
+`Plugins\DocumentConversion` directory next to `NoteManager.exe`.
+
+## Git Integration plugin
+
+Git synchronization is supplied as an optional plugin. Open a notes folder,
+then choose **Tools → Plugins…**. The plugin window lists **Git Integration**;
+select its checkbox to activate it for the current folder. Activation is
+per-vault and is stored in:
+
+```text
+<vault>\.note\plugins\activated.json
+```
+
+The plugin creates its settings and daily logs below
+`<vault>\.note\plugins\git-integration`. Edit `settings.json` while the plugin
+is inactive to change the interval, Git executable, command timeout, or commit
+message prefix. The default interval is five minutes. Activation schedules the
+plugin; it does not run a synchronization immediately. The first cycle starts
+after the configured interval has elapsed.
+
+Git Integration uses the installed `git` executable and requires the selected
+folder to already be the exact root of a configured repository. The current
+branch must have an upstream, `user.name` and `user.email` must be configured,
+and credentials must work without an interactive terminal prompt. NoteManager
+does not initialize repositories, configure remotes or credentials, change
+`safe.directory`, or resolve conflicts.
+
+Each non-overlapping cycle saves the active note, runs
+`git pull --rebase --autostash`, stages eligible changes, commits when required,
+and pushes the configured upstream. Pull or conflict failures stop the cycle
+before further mutations. A folder that is not a repository remains idle.
+
+New, untracked files or folders whose names begin with a dot are excluded at
+every depth, including `.note`, `.env`, `.obsidian`, and `.github`. If a dot-
+prefixed file or a file below a dot-prefixed folder is already tracked, it stays
+tracked: modifications and deletions are staged, committed, and pushed normally.
+Normal `.gitignore` rules are also respected for untracked content without
+preventing updates to files already in the repository.
+
+The separately buildable plugin project is
+`src/NoteManager.Plugin.GitIntegration/NoteManager.Plugin.GitIntegration.csproj`.
+Building it copies its binary to the host's configuration-specific directory:
+
+```text
+src\NoteManager.Desktop\bin\<Configuration>\net10.0\Plugins\GitIntegration
+```
+
+Published application output contains the same `Plugins\GitIntegration`
+directory next to `NoteManager.exe`. The original safety analysis and command
+sequence are documented in [`synchronization.md`](synchronization.md).
 
 ## Dialog-free folder automation
 
 UI tests can opt into a current-user-only named pipe and change the folder in the running application without invoking the native picker:
 
 ```powershell
+$vaultPath = 'C:\Notes\MyVault'
+$otherVaultPath = 'C:\Notes\AnotherVault'
+
 dotnet run --project .\src\NoteManager.Desktop\NoteManager.Desktop.csproj -- `
-  --folder .\SampleNotes `
+  --folder $vaultPath `
   --automation-pipe NoteManager.UiTest
 
 .\tools\Set-NoteManagerFolder.ps1 `
   -PipeName NoteManager.UiTest `
-  -Path .\SampleNotes\projects
+  -Path $otherVaultPath
 ```
 
 The pipe listener is disabled unless `--automation-pipe` is explicitly supplied. Both the injected startup path and runtime commands call the same `ChangeFolderAsync` path as the production folder picker.
@@ -362,21 +436,8 @@ thread, and calls the same PDF import path as a real drop. This makes collision,
 copy, embed, save, and viewer assertions deterministic without synthetic mouse
 input.
 
-Run the end-to-end smoke test with:
-
-```powershell
-.\tests\Test-FolderInjection.ps1 -Configuration Debug
-```
-
-The test starts the application with four notes, injects a change to the nested one-note folder, confirms that no folder dialog appeared, and verifies a body-only full-text query through native UI Automation.
-
-The destructive toolbar flow has a separate disposable-vault test:
-
-```powershell
-.\tests\Test-ToolbarActions.ps1 -Configuration Debug
-```
-
-It verifies the Share popup position, creates a zero-byte Markdown file in a temporary vault root, proves that declining Delete preserves the file, accepts the second confirmation, verifies that the file was removed, and then removes the disposable vault.
+The current Avalonia UI suite creates its own disposable vaults and runs through
+`tests/Run-UiTests.ps1`; it does not require a repository-level sample vault.
 
 ## Infostacker public links
 
@@ -391,13 +452,9 @@ Following the [`taskscape/InfostackerPlugin`](https://github.com/taskscape/Infos
 
 The request is made only after the user presses the publish button. The note and combined attachments are checked against the plugin's 100 MB limit before upload. An unreadable attachment is skipped, matching the plugin behavior, while an unavailable service or rejected request is reported inside the Share panel.
 
-The publishing contract and clipboard flow are tested against a local mock server—no real note data is uploaded:
-
-```powershell
-.\tests\Test-InfostackerPublishing.ps1 -Configuration Debug
-```
-
-The test-only `--infostacker-base-url` argument redirects the endpoint to that mock server.
+The legacy WPF automation reference includes a local mock-server publishing
+scenario, so no real note data is uploaded by that test. It is not part of the
+current Avalonia regression suite.
 
 ## Automatic note saving
 
@@ -405,11 +462,9 @@ The Markdown editor updates the selected note model on every text change. A dirt
 
 Saves use a write-through temporary file in the note's own directory followed by an overwrite move, preventing an interrupted write from truncating the original. If a save fails, the requested navigation or shutdown is cancelled and the current editor remains open with its unsaved text.
 
-The complete boundary behavior is exercised against a disposable vault:
-
-```powershell
-.\tests\Test-AutoSave.ps1 -Configuration Debug
-```
+The legacy WPF automation reference includes disposable-vault coverage for
+this boundary. Equivalent executable-level Avalonia coverage has not yet been
+added to the current UI suite.
 
 ## Markdown metadata and embedded media
 
@@ -435,14 +490,10 @@ names may contain letters, numbers, dots, and dashes; spaces and other special
 characters are not permitted. Separate several new names with spaces, commas,
 or semicolons.
 
-The native dialog and tag-block rewrite have a disposable-vault UI test:
-
-```powershell
-.\tests\Test-TagAssignment.ps1 -Configuration Debug
-```
-
-It verifies the recent/all repository lists, lowercase display, validation,
-multi-tag entry, tag removal, immediate file saving, and one-block merge.
+The legacy WPF automation reference covers recent/all tag lists, lowercase
+display, validation, multi-tag entry, tag removal, immediate saving, and
+one-block merge. Equivalent executable-level Avalonia coverage has not yet
+been added to the current UI suite.
 
 An inline Obsidian PDF or image transclusion uses:
 
@@ -455,7 +506,8 @@ Multiple PDF and PNG, JPG, JPEG, or BMP transclusions are supported in one note 
 
 ## Sample documents
 
-The repository also includes a compact `SampleNotes` fixture. The original visual-demo mode creates valid lightweight PDF and DOCX files in:
+When no vault is open, the visual-demo mode creates valid lightweight PDF and
+DOCX files in:
 
 ```text
 %LOCALAPPDATA%\NorthstarNoteManager\SampleDocuments

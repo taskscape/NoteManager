@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>NoteManager.Plugin.DocumentConversion</AssemblyName>
+    <RootNamespace>NoteManager.Plugin.DocumentConversion</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\NoteManager.Core\NoteManager.Core.csproj" />
+    <Content Include="Assets\**\*"
+             CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <Target Name="DeployPluginBesideDesktop" AfterTargets="Build">
+    <PropertyGroup>
+      <PluginDeploymentDirectory>$(MSBuildThisFileDirectory)..\NoteManager.Desktop\bin\$(Configuration)\net10.0\Plugins\DocumentConversion</PluginDeploymentDirectory>
+    </PropertyGroup>
+    <ItemGroup>
+      <PluginDeploymentFile Include="$(TargetPath)" />
+      <PluginDeploymentFile Include="$(TargetDir)$(TargetName).pdb"
+                            Condition="Exists('$(TargetDir)$(TargetName).pdb')" />
+      <PluginAsset Include="$(TargetDir)Assets\**\*" />
+    </ItemGroup>
+    <MakeDir Directories="$(PluginDeploymentDirectory)" />
+    <Copy SourceFiles="@(PluginDeploymentFile)"
+          DestinationFolder="$(PluginDeploymentDirectory)"
+          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(PluginAsset)"
+          DestinationFiles="@(PluginAsset->'$(PluginDeploymentDirectory)\Assets\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+  </Target>
+</Project>

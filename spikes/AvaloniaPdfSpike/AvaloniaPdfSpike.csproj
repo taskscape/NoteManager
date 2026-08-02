@@ -20,8 +20,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Content Include="..\..\SampleNotes\documents\orbital-guide.pdf"
-             Link="Assets\orbital-guide.pdf"
+    <Content Include="Assets\orbital-guide.pdf"
              CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

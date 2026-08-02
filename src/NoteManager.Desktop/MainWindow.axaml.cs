@@ -9,6 +9,7 @@ using NoteManager.App.Models;
 using NoteManager.App.Services;
 using NoteManager.App.ViewModels;
 using NoteManager.Desktop.Dialogs;
+using NoteManager.Desktop.Services;
 
 namespace NoteManager.Desktop;
 
@@ -21,12 +22,9 @@ public partial class MainWindow : Window
         AppleUniformTypeIdentifiers = ["com.adobe.pdf"]
     };
 
-    private static readonly string StateFilePath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "NoteManager",
-        "last-folder.txt");
-
     private readonly ApplicationOptions _options;
+    private readonly LastOpenedFolderService _lastOpenedFolderService = new();
+    private readonly PluginManager _pluginManager;
     private ShareDialog? _shareDialog;
     private UiAutomationServer? _automationServer;
     private bool _started;
@@ -45,6 +43,10 @@ public partial class MainWindow : Window
         InitializeComponent();
         DataContext = new MainViewModel(
             new InfostackerPublishingService(baseUri: options.InfostackerBaseUri));
+        _pluginManager = new PluginManager(
+            AppContext.BaseDirectory,
+            SaveActiveNoteForPluginAsync,
+            ReportPluginStatus);
         Opened += MainWindow_OnOpened;
         Closing += MainWindow_OnClosing;
         KeyDown += MainWindow_OnKeyDown;
@@ -144,15 +146,14 @@ public partial class MainWindow : Window
 
         _started = true;
         StartAutomationServer();
-        var folder = _options.FolderPath ?? ReadLastFolder();
+        var folder = _options.FolderPath ?? _lastOpenedFolderService.ReadExistingFolder();
         if (!string.IsNullOrWhiteSpace(folder) && Directory.Exists(folder))
         {
             await LoadFolderAsync(folder);
         }
         else
         {
-            ViewModel.StatusText =
-                "Open a Markdown folder to begin. Sample documents are shown until then.";
+            await RequireFolderSelectionAsync();
         }
     }
 
@@ -173,8 +174,23 @@ public partial class MainWindow : Window
                 ViewModel.CurrentFolderPath,
                 StringComparison.Ordinal))
         {
-            SaveLastFolder(ViewModel.CurrentFolderPath);
+            _lastOpenedFolderService.TrySave(ViewModel.CurrentFolderPath);
+            await _pluginManager.SetVaultAsync(ViewModel.CurrentFolderPath);
         }
+    }
+
+    private async Task RequireFolderSelectionAsync()
+    {
+        ViewModel.StatusText = "Select a Markdown folder to begin.";
+        var folder = await PickFolderAsync();
+        if (string.IsNullOrWhiteSpace(folder))
+        {
+            ViewModel.StatusText =
+                "A Markdown folder must be selected before you can work with notes.";
+            return;
+        }
+
+        await LoadFolderAsync(folder);
     }
 
     private async void ImportPdf_OnClick(object? sender, RoutedEventArgs e)
@@ -278,6 +294,12 @@ public partial class MainWindow : Window
         {
             ViewModel.ApplyTagsToSelectedNote(dialog.SelectedTags);
         }
+    }
+
+    private async void Plugins_OnClick(object? sender, RoutedEventArgs e)
+    {
+        var dialog = new PluginsDialog(_pluginManager);
+        await dialog.ShowDialog(this);
     }
 
     private async void Delete_OnClick(object? sender, RoutedEventArgs e)
@@ -420,6 +442,18 @@ public partial class MainWindow : Window
 
         _automationServer?.Dispose();
         _automationServer = null;
+        using (var stopTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(3)))
+        {
+            try
+            {
+                _pluginManager.StopAllAsync(stopTimeout.Token).GetAwaiter().GetResult();
+            }
+            catch (OperationCanceledException)
+            {
+                // Shutdown remains bounded even when an external Git process is slow.
+            }
+        }
+
         ViewModel.Dispose();
     }
 
@@ -469,30 +503,19 @@ public partial class MainWindow : Window
         await dispatched;
     }
 
-    private static string? ReadLastFolder()
+    private async Task<bool> SaveActiveNoteForPluginAsync(
+        CancellationToken cancellationToken)
     {
-        try
-        {
-            return File.Exists(StateFilePath)
-                ? File.ReadAllText(StateFilePath).Trim()
-                : null;
-        }
-        catch
-        {
-            return null;
-        }
+        cancellationToken.ThrowIfCancellationRequested();
+        return await Dispatcher.UIThread.InvokeAsync(
+            () => ViewModel.TrySaveSelectedNote(updateSearchIndex: false),
+            DispatcherPriority.Normal,
+            cancellationToken);
     }
 
-    private static void SaveLastFolder(string folder)
-    {
-        try
-        {
-            Directory.CreateDirectory(Path.GetDirectoryName(StateFilePath)!);
-            File.WriteAllText(StateFilePath, folder);
-        }
-        catch
-        {
-            // Remembering the folder is a convenience; failure is non-fatal.
-        }
-    }
+    private void ReportPluginStatus(string message)
+        => Dispatcher.UIThread.Post(
+            () => ViewModel.StatusText = message,
+            DispatcherPriority.Normal);
+
 }
