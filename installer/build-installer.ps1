@@ -187,6 +187,17 @@ if (-not (Test-Path -LiteralPath $publishedExecutable -PathType Leaf)) {
     throw "Publish completed without producing '$publishedExecutable'."
 }
 
+$requiredPluginFiles = @(
+    "Plugins\GitIntegration\NoteManager.Plugin.GitIntegration.dll",
+    "Plugins\DocumentConversion\NoteManager.Plugin.DocumentConversion.dll"
+)
+foreach ($relativePath in $requiredPluginFiles) {
+    $pluginFile = Join-Path $publishDir $relativePath
+    if (-not (Test-Path -LiteralPath $pluginFile -PathType Leaf)) {
+        throw "Publish completed without required plugin file '$relativePath'."
+    }
+}
+
 $iscc = Resolve-Iscc -ExplicitPath $IsccPath
 if (-not $iscc) {
     throw "ISCC.exe was not found. Install Inno Setup 6 or 7, add ISCC.exe to PATH, or pass -IsccPath."

@@ -3,6 +3,7 @@ using Xunit;
 
 namespace NoteManager.App.Tests;
 
+[Trait("Category", "Unit")]
 public sealed class NoteRenamingTests
 {
     [Fact]

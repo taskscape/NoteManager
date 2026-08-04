@@ -4,6 +4,7 @@ using Xunit;
 
 namespace NoteManager.App.Tests;
 
+[Trait("Category", "Database")]
 public sealed class NoteSearchViewModelTests
 {
     [Fact]

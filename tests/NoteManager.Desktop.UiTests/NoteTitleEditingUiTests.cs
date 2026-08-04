@@ -5,7 +5,7 @@ namespace NoteManager.Desktop.UiTests;
 
 [TestFixture]
 [Apartment(ApartmentState.STA)]
-[Category("UI")]
+[Category("EndToEnd")]
 internal sealed class NoteTitleEditingUiTests : UiTestBase
 {
     [Test]

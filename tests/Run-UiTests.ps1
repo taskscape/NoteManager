@@ -3,7 +3,7 @@ param(
     [ValidateSet("Debug", "Release")]
     [string]$Configuration = "Debug",
 
-    [string]$Filter = "Category=UI",
+    [string]$Filter = "Category=EndToEnd",
 
     [switch]$NoBuild
 )

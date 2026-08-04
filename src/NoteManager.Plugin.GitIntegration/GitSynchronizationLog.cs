@@ -2,14 +2,15 @@ namespace NoteManager.Plugin.GitIntegration;
 
 public sealed class GitSynchronizationLog(string configurationDirectory)
 {
-    private readonly SemaphoreSlim _writeLock = new(1, 1);
+    public const int RetentionMonths = 12;
+    private static readonly SemaphoreSlim WriteLock = new(1, 1);
     private readonly string _logDirectory = Path.Combine(configurationDirectory, "logs");
 
     public async Task WriteAsync(
         string message,
         CancellationToken cancellationToken = default)
     {
-        await _writeLock.WaitAsync(cancellationToken);
+        await WriteLock.WaitAsync(cancellationToken);
         try
         {
             Directory.CreateDirectory(_logDirectory);
@@ -22,13 +23,13 @@ public sealed class GitSynchronizationLog(string configurationDirectory)
         }
         finally
         {
-            _writeLock.Release();
+            WriteLock.Release();
         }
     }
 
     private void DeleteExpiredLogs()
     {
-        var threshold = DateTime.Today.AddMonths(-1);
+        var threshold = DateTime.Today.AddMonths(-RetentionMonths);
         foreach (var path in Directory.EnumerateFiles(_logDirectory, "GitSync-*.log"))
         {
             var name = Path.GetFileNameWithoutExtension(path);

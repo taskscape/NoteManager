@@ -23,15 +23,6 @@ public sealed class DocumentConversionOptions
 
     public string OcrLanguages { get; set; } = "eng+pol";
 
-    public string? TessdataPath { get; set; }
-
-    public string? CliExecutablePath { get; set; }
-
-    public string? MarkItDownCommandPath { get; set; } =
-        @"C:\Projects\DOC2MD\.markitdown-venv\Scripts\markitdown.exe";
-
-    public string? LibreOfficeExecutablePath { get; set; }
-
     public static DocumentConversionOptions LoadOrCreate(
         string configurationDirectory)
     {
@@ -44,11 +35,13 @@ public sealed class DocumentConversionOptions
             return defaults;
         }
 
+        var json = File.ReadAllText(path);
         var options = JsonSerializer.Deserialize<DocumentConversionOptions>(
-                          File.ReadAllText(path),
+                          json,
                           JsonOptions)
                       ?? new DocumentConversionOptions();
         options.Validate();
+        RemoveLegacyExecutableOverrides(path, json, options);
         return options;
     }
 
@@ -78,6 +71,27 @@ public sealed class DocumentConversionOptions
         {
             throw new InvalidDataException(
                 "Document conversion OcrLanguages must contain one non-empty line.");
+        }
+    }
+
+    private static void RemoveLegacyExecutableOverrides(
+        string path,
+        string json,
+        DocumentConversionOptions options)
+    {
+        using var document = JsonDocument.Parse(json);
+        var legacyNames = new[]
+        {
+            "CliExecutablePath",
+            "MarkItDownCommandPath",
+            "LibreOfficeExecutablePath",
+            "TessdataPath"
+        };
+        if (legacyNames.Any(name => document.RootElement.TryGetProperty(name, out _)))
+        {
+            // DOC2MD owns its installed dependencies, so vault settings no
+            // longer retain paths into a source checkout or plugin bundle.
+            File.WriteAllText(path, JsonSerializer.Serialize(options, JsonOptions));
         }
     }
 }

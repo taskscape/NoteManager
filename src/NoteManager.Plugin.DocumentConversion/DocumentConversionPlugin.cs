@@ -4,9 +4,24 @@ namespace NoteManager.Plugin.DocumentConversion;
 
 public sealed class DocumentConversionPlugin : INoteManagerPlugin
 {
+    public const string DefaultCliExecutablePath =
+        @"C:\Program Files\Taskscape\DOC2MD\DOC2MD.Cli.exe";
+
     private readonly SemaphoreSlim _lifecycleLock = new(1, 1);
+    private readonly string _cliExecutablePath;
     private CancellationTokenSource? _cancellation;
     private Task? _scheduler;
+
+    public DocumentConversionPlugin()
+        : this(DefaultCliExecutablePath)
+    {
+    }
+
+    internal DocumentConversionPlugin(string cliExecutablePath)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(cliExecutablePath);
+        _cliExecutablePath = Path.GetFullPath(cliExecutablePath);
+    }
 
     public PluginMetadata Metadata { get; } = new(
         "document-conversion",
@@ -32,17 +47,18 @@ public sealed class DocumentConversionPlugin : INoteManagerPlugin
             }
 
             options.Validate();
-            var executablePath = ResolveCliExecutablePath(options);
-            if (!File.Exists(executablePath))
+            if (!File.Exists(_cliExecutablePath))
             {
-                throw new FileNotFoundException(
-                    "The packaged DOC2MD.Cli executable was not found.",
-                    executablePath);
+                var message =
+                    $"Document Conversion requires DOC2MD to be installed at '{_cliExecutablePath}'. "
+                    + "Install DOC2MD in its default location, then restart NoteManager.";
+                context.ReportStatus(message);
+                throw new FileNotFoundException(message, _cliExecutablePath);
             }
 
             var log = new DocumentConversionLog(context.ConfigurationDirectory);
-            var runner = new Doc2MdProcessRunner(executablePath, options);
-            var service = new DocumentConversionService(runner, log);
+            var runner = new Doc2MdProcessRunner(_cliExecutablePath, options);
+            var service = new DocumentConversionService(runner, log, options);
             _cancellation = new CancellationTokenSource();
             _scheduler = RunSchedulerAsync(
                 context,
@@ -156,23 +172,4 @@ public sealed class DocumentConversionPlugin : INoteManagerPlugin
         cancellation?.Dispose();
     }
 
-    private static string ResolveCliExecutablePath(
-        DocumentConversionOptions options)
-    {
-        var pluginDirectory = Path.GetDirectoryName(
-                                  typeof(DocumentConversionPlugin).Assembly.Location)
-                              ?? AppContext.BaseDirectory;
-        if (string.IsNullOrWhiteSpace(options.CliExecutablePath))
-        {
-            return Path.Combine(
-                pluginDirectory,
-                "Assets",
-                "DOC2MD.Cli",
-                "DOC2MD.Cli.exe");
-        }
-
-        return Path.GetFullPath(
-            options.CliExecutablePath,
-            pluginDirectory);
-    }
 }

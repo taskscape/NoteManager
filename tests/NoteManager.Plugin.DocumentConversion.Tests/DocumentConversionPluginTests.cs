@@ -4,6 +4,7 @@ using Xunit;
 
 namespace NoteManager.Plugin.DocumentConversion.Tests;
 
+[Trait("Category", "Integration")]
 public sealed class DocumentConversionPluginTests
 {
     [Fact]
@@ -30,7 +31,9 @@ public sealed class DocumentConversionPluginTests
                     firstScan.TrySetResult();
                 }
             });
-        await using var plugin = new DocumentConversionPlugin();
+        var cliPath = Path.Combine(folder.Path, "DOC2MD.Cli.exe");
+        File.WriteAllText(cliPath, string.Empty);
+        await using var plugin = new DocumentConversionPlugin(cliPath);
 
         await plugin.StartAsync(context);
         await firstScan.Task.WaitAsync(TimeSpan.FromSeconds(10));
@@ -42,6 +45,36 @@ public sealed class DocumentConversionPluginTests
                 Path.Combine(configurationDirectory, "logs"),
                 "DocumentConversion-*.log")
             .Any());
+    }
+
+    [Fact]
+    public async Task StartAsync_FailsWithInstalledPathGuidanceWhenDoc2MdIsMissing()
+    {
+        using var folder = new TemporaryFolder();
+        var missingCliPath = Path.Combine(folder.Path, "missing", "DOC2MD.Cli.exe");
+        var statuses = new List<string>();
+        var context = new PluginHostContext(
+            folder.Path,
+            Path.Combine(folder.Path, ".note", "plugins", "document-conversion"),
+            _ => Task.FromResult(true),
+            statuses.Add);
+        await using var plugin = new DocumentConversionPlugin(missingCliPath);
+
+        var exception = await Assert.ThrowsAsync<FileNotFoundException>(
+            () => plugin.StartAsync(context));
+
+        Assert.Contains(missingCliPath, exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(
+            statuses,
+            status => status.Contains("Install DOC2MD", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void DefaultCliExecutablePath_UsesTheDOC2MDInstallerLocation()
+    {
+        Assert.Equal(
+            @"C:\Program Files\Taskscape\DOC2MD\DOC2MD.Cli.exe",
+            DocumentConversionPlugin.DefaultCliExecutablePath);
     }
 
     private sealed class TemporaryFolder : IDisposable

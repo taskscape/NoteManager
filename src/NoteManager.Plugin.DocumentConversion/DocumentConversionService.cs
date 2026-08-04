@@ -14,8 +14,20 @@ public sealed record DocumentConversionResult(
 
 public sealed class DocumentConversionService(
     IDoc2MdProcessRunner runner,
-    DocumentConversionLog log)
+    DocumentConversionLog log,
+    DocumentConversionOptions options)
 {
+    private static readonly HashSet<string> SupportedExtensions = new(
+        [".pdf", ".doc", ".docx", ".docm", ".xlsx", ".xls", ".xlsm",
+         ".pptx", ".ppt", ".pptm", ".rtf", ".odt", ".ods", ".odp",
+         ".txt", ".text", ".csv", ".html", ".htm", ".epub"],
+        StringComparer.OrdinalIgnoreCase);
+
+    private static readonly HashSet<string> LegacyExtensions = new(
+        [".doc", ".docm", ".rtf", ".odt", ".xls", ".xlsm", ".ods",
+         ".ppt", ".pptm", ".odp"],
+        StringComparer.OrdinalIgnoreCase);
+
     public async Task<DocumentConversionResult> ConvertPendingAsync(
         PluginHostContext context,
         CancellationToken cancellationToken = default)
@@ -41,98 +53,217 @@ public sealed class DocumentConversionService(
         }
 
         await using var heldConversionLock = conversionLock;
-        context.ReportStatus("Checking for documents that need Markdown counterparts…");
-        var process = await runner.ConvertFolderAsync(
+        var pendingDocuments = FindPendingDocuments(
             context.VaultPath,
-            cancellationToken);
+            options.Recursive);
+        context.ReportStatus("Checking for documents that need Markdown counterparts…");
+        await log.WriteAsync(
+            $"Starting newest-first conversion of {pendingDocuments.Count:N0} document(s).",
+            CancellationToken.None);
 
-        if (process.WasCancelled)
+        var converted = 0;
+        var skipped = 0;
+        var failures = 0;
+        for (var index = 0; index < pendingDocuments.Count; index++)
         {
-            const string message = "Document conversion was cancelled.";
-            await LogAndReportAsync(context, message, CancellationToken.None);
-            return new DocumentConversionResult(false, true, message);
+            cancellationToken.ThrowIfCancellationRequested();
+            var document = pendingDocuments[index];
+            if (File.Exists(document.OutputPath))
+            {
+                skipped++;
+                continue;
+            }
+
+            var relativePath = Path.GetRelativePath(
+                context.VaultPath,
+                document.InputPath);
+            context.ReportStatus(
+                $"Converting document {index + 1:N0} of {pendingDocuments.Count:N0}: {relativePath}");
+            var existingTemporaryOutputs = FindAtomicTemporaryOutputs(
+                document.OutputPath);
+            var process = await runner.ConvertFileAsync(
+                document.InputPath,
+                document.OutputPath,
+                cancellationToken);
+
+            if (process.WasCancelled)
+            {
+                CleanupFailedDocument(document.OutputPath, existingTemporaryOutputs);
+                var message =
+                    $"Document conversion was cancelled after {converted:N0} successful conversion(s).";
+                await LogAndReportAsync(context, message, CancellationToken.None);
+                return new DocumentConversionResult(
+                    false,
+                    true,
+                    message,
+                    pendingDocuments.Count,
+                    converted,
+                    skipped,
+                    failures);
+            }
+
+            if (process.TimedOut)
+            {
+                failures++;
+                CleanupFailedDocument(document.OutputPath, existingTemporaryOutputs);
+                await LogItemFailureAsync(
+                    relativePath,
+                    $"exceeded the {options.CommandTimeoutMinutes:N0}-minute timeout");
+                continue;
+            }
+
+            if (!TryReadItemResult(process.StandardOutput, out var item))
+            {
+                failures++;
+                CleanupFailedDocument(document.OutputPath, existingTemporaryOutputs);
+                var detail = process.Succeeded
+                    ? "returned an unreadable JSON result"
+                    : $"failed with exit code {process.ExitCode}: {Bound(process.StandardError)}";
+                await LogItemFailureAsync(relativePath, detail);
+                continue;
+            }
+
+            if (item.Skipped)
+            {
+                skipped++;
+                continue;
+            }
+
+            if (process.Succeeded
+                && item.Succeeded
+                && File.Exists(document.OutputPath))
+            {
+                converted++;
+                continue;
+            }
+
+            failures++;
+            CleanupFailedDocument(document.OutputPath, existingTemporaryOutputs);
+            var failureDetail = string.IsNullOrWhiteSpace(process.StandardError)
+                ? "DOC2MD reported that the document was not converted"
+                : Bound(process.StandardError);
+            await LogItemFailureAsync(relativePath, failureDetail);
         }
 
-        if (process.TimedOut)
-        {
-            var message =
-                $"Document conversion exceeded its timeout after {process.Duration.TotalMinutes:N0} minute(s).";
-            await LogAndReportAsync(context, message, CancellationToken.None);
-            return new DocumentConversionResult(false, false, message, Failures: 1);
-        }
-
-        if (!TryReadSummary(process.StandardOutput, out var summary))
-        {
-            var detail = Bound(process.StandardError);
-            var message = process.Succeeded
-                ? "DOC2MD.Cli returned an unreadable conversion summary."
-                : $"DOC2MD.Cli failed with exit code {process.ExitCode}: {detail}";
-            await LogAndReportAsync(context, message, CancellationToken.None);
-            return new DocumentConversionResult(false, false, message, Failures: 1);
-        }
-
-        var resultMessage = summary.Failures == 0
-            ? $"Document conversion complete: {summary.Converted:N0} converted, "
-              + $"{summary.ExistingOrSkipped:N0} already converted or skipped."
-            : $"Document conversion completed with {summary.Failures:N0} failure(s): "
-              + $"{summary.Converted:N0} converted, {summary.ExistingOrSkipped:N0} skipped.";
-        if (!string.IsNullOrWhiteSpace(process.StandardError))
-        {
-            resultMessage += $" DOC2MD: {Bound(process.StandardError)}";
-        }
-
+        var resultMessage = failures == 0
+            ? $"Document conversion complete: {converted:N0} converted, {skipped:N0} already converted or skipped."
+            : $"Document conversion completed with {failures:N0} failure(s): "
+              + $"{converted:N0} converted, {skipped:N0} skipped. Successful outputs were preserved.";
         await LogAndReportAsync(context, resultMessage, CancellationToken.None);
-        return summary with
+        return new DocumentConversionResult(
+            failures == 0,
+            false,
+            resultMessage,
+            pendingDocuments.Count,
+            converted,
+            skipped,
+            failures);
+
+        async Task LogItemFailureAsync(string path, string detail)
         {
-            Succeeded = process.Succeeded && summary.Failures == 0,
-            Message = resultMessage
-        };
+            var message = $"Document conversion failed for '{path}': {detail}.";
+            await log.WriteAsync(message, CancellationToken.None);
+            context.ReportStatus(message);
+        }
     }
 
-    private static bool TryReadSummary(
-        string standardOutput,
-        out DocumentConversionResult summary)
+    internal static IReadOnlyList<PendingDocument> FindPendingDocuments(
+        string vaultPath,
+        bool recursive)
     {
-        summary = new DocumentConversionResult(
-            false,
-            false,
-            "DOC2MD.Cli did not return a summary.");
+        var enumerationOptions = new EnumerationOptions
+        {
+            RecurseSubdirectories = recursive,
+            IgnoreInaccessible = true,
+            ReturnSpecialDirectories = false,
+            AttributesToSkip = FileAttributes.ReparsePoint
+        };
+
+        return Directory.EnumerateFiles(vaultPath, "*", enumerationOptions)
+            .Where(path => SupportedExtensions.Contains(Path.GetExtension(path)))
+            .Select(path => new FileInfo(path))
+            .GroupBy(
+                file => Path.ChangeExtension(file.FullName, ".md"),
+                StringComparer.OrdinalIgnoreCase)
+            .Select(group => group
+                .OrderBy(file => LegacyExtensions.Contains(file.Extension) ? 1 : 0)
+                .ThenByDescending(file => file.LastWriteTimeUtc)
+                .ThenBy(file => file.FullName, StringComparer.OrdinalIgnoreCase)
+                .First())
+            .Select(file => new PendingDocument(
+                file.FullName,
+                Path.ChangeExtension(file.FullName, ".md"),
+                file.LastWriteTimeUtc))
+            .Where(document => !File.Exists(document.OutputPath))
+            .OrderByDescending(document => document.LastWriteTimeUtc)
+            .ThenBy(document => document.InputPath, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    private static HashSet<string> FindAtomicTemporaryOutputs(string outputPath)
+    {
+        var directory = Path.GetDirectoryName(Path.GetFullPath(outputPath))!;
+        return Directory.Exists(directory)
+            ? Directory.EnumerateFiles(directory, ".doc2md-*.tmp")
+                .ToHashSet(StringComparer.OrdinalIgnoreCase)
+            : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static void CleanupFailedDocument(
+        string outputPath,
+        IReadOnlySet<string> existingTemporaryOutputs)
+    {
+        TryDelete(outputPath);
+        var directory = Path.GetDirectoryName(Path.GetFullPath(outputPath))!;
+        if (!Directory.Exists(directory))
+        {
+            return;
+        }
+
+        foreach (var temporaryOutput in Directory.EnumerateFiles(
+                     directory,
+                     ".doc2md-*.tmp"))
+        {
+            if (!existingTemporaryOutputs.Contains(temporaryOutput))
+            {
+                TryDelete(temporaryOutput);
+            }
+        }
+    }
+
+    private static void TryDelete(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException)
+        {
+            // The individual conversion failure remains the primary outcome.
+        }
+    }
+
+    private static bool TryReadItemResult(
+        string standardOutput,
+        out CliItemResult result)
+    {
+        result = new CliItemResult(false, false);
         try
         {
             using var document = JsonDocument.Parse(standardOutput);
             var root = document.RootElement;
-            var total = root.GetProperty("total").GetInt32();
-            var failures = root.GetProperty("failures").GetInt32();
-            var converted = 0;
-            var skipped = 0;
-            foreach (var item in root.GetProperty("items").EnumerateArray())
-            {
-                if (item.TryGetProperty("succeeded", out var succeeded)
-                    && succeeded.ValueKind == JsonValueKind.True)
-                {
-                    converted++;
-                }
-                else if (item.TryGetProperty("skipped", out var wasSkipped)
-                         && wasSkipped.ValueKind == JsonValueKind.True)
-                {
-                    skipped++;
-                }
-            }
-
-            summary = new DocumentConversionResult(
-                failures == 0,
-                false,
-                string.Empty,
-                total,
-                converted,
-                skipped,
-                failures);
+            result = new CliItemResult(
+                root.TryGetProperty("succeeded", out var succeeded)
+                && succeeded.ValueKind == JsonValueKind.True,
+                root.TryGetProperty("skipped", out var skipped)
+                && skipped.ValueKind == JsonValueKind.True);
             return true;
         }
-        catch (Exception exception) when (
-            exception is JsonException
-            or InvalidOperationException
-            or KeyNotFoundException)
+        catch (JsonException)
         {
             return false;
         }
@@ -157,4 +288,11 @@ public sealed class DocumentConversionService(
             _ => normalized
         };
     }
+
+    internal sealed record PendingDocument(
+        string InputPath,
+        string OutputPath,
+        DateTime LastWriteTimeUtc);
+
+    private sealed record CliItemResult(bool Succeeded, bool Skipped);
 }

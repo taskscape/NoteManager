@@ -15,8 +15,9 @@ public sealed record Doc2MdProcessResult(
 
 public interface IDoc2MdProcessRunner
 {
-    Task<Doc2MdProcessResult> ConvertFolderAsync(
-        string vaultPath,
+    Task<Doc2MdProcessResult> ConvertFileAsync(
+        string inputPath,
+        string outputPath,
         CancellationToken cancellationToken = default);
 }
 
@@ -24,10 +25,22 @@ public sealed class Doc2MdProcessRunner(
     string executablePath,
     DocumentConversionOptions options) : IDoc2MdProcessRunner
 {
-    public async Task<Doc2MdProcessResult> ConvertFolderAsync(
-        string vaultPath,
+    public async Task<Doc2MdProcessResult> ConvertFileAsync(
+        string inputPath,
+        string outputPath,
         CancellationToken cancellationToken = default)
     {
+        if (!File.Exists(executablePath))
+        {
+            return new Doc2MdProcessResult(
+                -1,
+                string.Empty,
+                $"DOC2MD was not found at '{executablePath}'. Reinstall DOC2MD in its default location and restart NoteManager.",
+                TimeSpan.Zero,
+                false,
+                false);
+        }
+
         var startInfo = new ProcessStartInfo
         {
             FileName = executablePath,
@@ -38,11 +51,10 @@ public sealed class Doc2MdProcessRunner(
             RedirectStandardOutput = true,
             RedirectStandardError = true
         };
-        foreach (var argument in BuildArguments(vaultPath))
+        foreach (var argument in BuildArguments(inputPath, outputPath))
         {
             startInfo.ArgumentList.Add(argument);
         }
-        AddEnvironment(startInfo);
 
         using var process = new Process { StartInfo = startInfo };
         var stopwatch = Stopwatch.StartNew();
@@ -101,52 +113,28 @@ public sealed class Doc2MdProcessRunner(
             timedOut);
     }
 
-    internal IReadOnlyList<string> BuildArguments(string vaultPath)
+    internal IReadOnlyList<string> BuildArguments(
+        string inputPath,
+        string outputPath)
     {
         var arguments = new List<string>
         {
-            "convert-folder",
+            "convert",
             "--input",
-            vaultPath
+            inputPath,
+            "--output",
+            outputPath,
+            "--json"
         };
-        if (options.Recursive)
-        {
-            arguments.Add("--recursive");
-        }
-
-        // Deliberately omit --overwrite: an existing sibling .md file is the
-        // conversion marker and must never be replaced by the periodic job.
-        arguments.Add("--continue-on-error");
-        arguments.Add("--json");
         arguments.Add("--pdf-processing");
         arguments.Add(options.PdfProcessing);
         if (options.PdfProcessing.Equals("local", StringComparison.Ordinal))
         {
             arguments.Add("--ocr-languages");
             arguments.Add(options.OcrLanguages);
-            if (!string.IsNullOrWhiteSpace(options.TessdataPath))
-            {
-                arguments.Add("--tessdata");
-                arguments.Add(options.TessdataPath);
-            }
         }
 
         return arguments;
-    }
-
-    private void AddEnvironment(ProcessStartInfo startInfo)
-    {
-        if (!string.IsNullOrWhiteSpace(options.MarkItDownCommandPath))
-        {
-            startInfo.Environment["DOC2MD_MARKITDOWN_COMMAND"] =
-                options.MarkItDownCommandPath;
-        }
-
-        if (!string.IsNullOrWhiteSpace(options.LibreOfficeExecutablePath))
-        {
-            startInfo.Environment["DOC2MD_SOFFICE_PATH"] =
-                options.LibreOfficeExecutablePath;
-        }
     }
 
     private static void TryKillProcessTree(Process process)

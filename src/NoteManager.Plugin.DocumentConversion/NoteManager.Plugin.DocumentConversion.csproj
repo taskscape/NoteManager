@@ -9,8 +9,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\NoteManager.Core\NoteManager.Core.csproj" />
-    <Content Include="Assets\**\*"
-             CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <Target Name="DeployPluginBesideDesktop" AfterTargets="Build">
@@ -21,14 +19,14 @@
       <PluginDeploymentFile Include="$(TargetPath)" />
       <PluginDeploymentFile Include="$(TargetDir)$(TargetName).pdb"
                             Condition="Exists('$(TargetDir)$(TargetName).pdb')" />
-      <PluginAsset Include="$(TargetDir)Assets\**\*" />
     </ItemGroup>
+    <RemoveDir Directories="$(TargetDir)Assets"
+               Condition="Exists('$(TargetDir)Assets')" />
+    <RemoveDir Directories="$(PluginDeploymentDirectory)\Assets"
+               Condition="Exists('$(PluginDeploymentDirectory)\Assets')" />
     <MakeDir Directories="$(PluginDeploymentDirectory)" />
     <Copy SourceFiles="@(PluginDeploymentFile)"
           DestinationFolder="$(PluginDeploymentDirectory)"
-          SkipUnchangedFiles="true" />
-    <Copy SourceFiles="@(PluginAsset)"
-          DestinationFiles="@(PluginAsset->'$(PluginDeploymentDirectory)\Assets\%(RecursiveDir)%(Filename)%(Extension)')"
           SkipUnchangedFiles="true" />
   </Target>
 </Project>

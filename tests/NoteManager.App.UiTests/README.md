@@ -91,7 +91,7 @@ is named after the test and truncated to a filesystem-safe length.
 ## Adding a scenario
 
 Derive the fixture from `UiTestBase`, add `[Apartment(ApartmentState.STA)]` and
-`[Category("UI")]`, populate only the disposable `Vault`, then launch through
+`[Category("EndToEnd")]`, populate only the disposable `Vault`, then launch through
 the base class. Prefer stable `AutomationProperties.AutomationId` values and
 observable files/status over sleeps or screen coordinates. Use `UiWait` for
 eventual background work and let teardown own every registered disposable

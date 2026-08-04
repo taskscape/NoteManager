@@ -15,6 +15,13 @@ namespace NoteManager.Desktop;
 
 public partial class MainWindow : Window
 {
+    private enum FolderOpenSource
+    {
+        Other,
+        UserSelection,
+        PreviousSession
+    }
+
     private static readonly FilePickerFileType PdfFileType = new("PDF documents")
     {
         Patterns = ["*.pdf"],
@@ -24,12 +31,15 @@ public partial class MainWindow : Window
 
     private readonly ApplicationOptions _options;
     private readonly LastOpenedFolderService _lastOpenedFolderService = new();
+    private readonly ApplicationActivityLog _activityLog = new();
     private readonly PluginManager _pluginManager;
     private ShareDialog? _shareDialog;
     private UiAutomationServer? _automationServer;
     private bool _started;
     private bool _storagePickerOpen;
     private bool _isCommittingTitleEdit;
+    private bool _shutdownInProgress;
+    private bool _shutdownCompleted;
     private NoteItem? _titleEditNote;
 
     public MainWindow()
@@ -146,10 +156,18 @@ public partial class MainWindow : Window
 
         _started = true;
         StartAutomationServer();
-        var folder = _options.FolderPath ?? _lastOpenedFolderService.ReadExistingFolder();
+        _activityLog.TryWriteApplicationOpened();
+        var folderFromPreviousSession = _options.FolderPath is null
+                                        ? _lastOpenedFolderService.ReadExistingFolder()
+                                        : null;
+        var folder = _options.FolderPath ?? folderFromPreviousSession;
         if (!string.IsNullOrWhiteSpace(folder) && Directory.Exists(folder))
         {
-            await LoadFolderAsync(folder);
+            await LoadFolderAsync(
+                folder,
+                folderFromPreviousSession is not null
+                    ? FolderOpenSource.PreviousSession
+                    : FolderOpenSource.Other);
         }
         else
         {
@@ -162,11 +180,13 @@ public partial class MainWindow : Window
         var folder = await PickFolderAsync();
         if (!string.IsNullOrWhiteSpace(folder))
         {
-            await LoadFolderAsync(folder);
+            await LoadFolderAsync(folder, FolderOpenSource.UserSelection);
         }
     }
 
-    private async Task LoadFolderAsync(string folder)
+    private async Task LoadFolderAsync(
+        string folder,
+        FolderOpenSource source = FolderOpenSource.Other)
     {
         await ViewModel.LoadMarkdownFolderAsync(folder);
         if (ViewModel.IsFolderMode
@@ -175,6 +195,15 @@ public partial class MainWindow : Window
                 StringComparison.Ordinal))
         {
             _lastOpenedFolderService.TrySave(ViewModel.CurrentFolderPath);
+            if (source == FolderOpenSource.UserSelection)
+            {
+                _activityLog.TryWriteFolderSelected(ViewModel.CurrentFolderPath);
+            }
+            else if (source == FolderOpenSource.PreviousSession)
+            {
+                _activityLog.TryWriteFolderRestoredFromPreviousSession(
+                    ViewModel.CurrentFolderPath);
+            }
             await _pluginManager.SetVaultAsync(ViewModel.CurrentFolderPath);
         }
     }
@@ -190,7 +219,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        await LoadFolderAsync(folder);
+        await LoadFolderAsync(folder, FolderOpenSource.UserSelection);
     }
 
     private async void ImportPdf_OnClick(object? sender, RoutedEventArgs e)
@@ -391,7 +420,7 @@ public partial class MainWindow : Window
                 var folder = await PickFolderAsync();
                 if (!string.IsNullOrWhiteSpace(folder))
                 {
-                    await LoadFolderAsync(folder);
+                    await LoadFolderAsync(folder, FolderOpenSource.UserSelection);
                 }
                 break;
         }
@@ -430,31 +459,49 @@ public partial class MainWindow : Window
         }
     }
 
-    private void MainWindow_OnClosing(object? sender, WindowClosingEventArgs e)
+    private async void MainWindow_OnClosing(object? sender, WindowClosingEventArgs e)
     {
+        if (_shutdownCompleted)
+        {
+            return;
+        }
+
+        e.Cancel = true;
+        if (_shutdownInProgress)
+        {
+            return;
+        }
+
         if (!ViewModel.TrySaveSelectedNote(updateSearchIndex: false))
         {
-            e.Cancel = true;
             ViewModel.StatusText =
                 "The window remains open because the current note could not be saved.";
             return;
         }
 
+        _shutdownInProgress = true;
         _automationServer?.Dispose();
         _automationServer = null;
-        using (var stopTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(3)))
+        try
         {
+            using var stopTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
             try
             {
-                _pluginManager.StopAllAsync(stopTimeout.Token).GetAwaiter().GetResult();
+                await _pluginManager.StopAllAsync(stopTimeout.Token);
             }
             catch (OperationCanceledException)
             {
                 // Shutdown remains bounded even when an external Git process is slow.
             }
-        }
 
-        ViewModel.Dispose();
+            ViewModel.Dispose();
+            _shutdownCompleted = true;
+            Close();
+        }
+        finally
+        {
+            _shutdownInProgress = false;
+        }
     }
 
     private void StartAutomationServer()

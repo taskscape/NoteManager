@@ -5,6 +5,7 @@ using Xunit;
 
 namespace NoteManager.Plugin.GitIntegration.Tests;
 
+[Trait("Category", "Integration")]
 public sealed class GitSynchronizationServiceTests
 {
     [Fact]

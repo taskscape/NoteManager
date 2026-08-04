@@ -32,26 +32,59 @@ dotnet run --project .\src\NoteManager.Desktop\NoteManager.Desktop.csproj -- `
   --folder C:\Notes\MyVault
 ```
 
-## Automated regression tests
+## Activity and plugin logs
 
-The portable service and view-model suite runs on both operating systems:
+NoteManager writes local daily activity logs. On Windows, the application log
+is stored outside the selected repository:
 
-```bash
-dotnet test tests/NoteManager.App.Tests/NoteManager.App.Tests.csproj
+```text
+%LOCALAPPDATA%\NoteManager\logs\Application-YYYY-MM-DD.log
 ```
 
-On Windows, the executable-level search suite launches the current Avalonia
-application and drives the real search box through UI Automation:
+It records application startup, a repository folder selected by the user, and
+a repository folder restored from a previous session. Each enabled plugin
+writes its own daily log inside the selected vault:
+
+```text
+<vault>\.note\plugins\git-integration\logs\GitSync-YYYY-MM-DD.log
+<vault>\.note\plugins\document-conversion\logs\DocumentConversion-YYYY-MM-DD.log
+```
+
+Git Integration logs pull, staging, commit, and push outcomes. Document
+Conversion logs scan and conversion outcomes, including failure cleanup. All
+three log streams use thread-safe writes and remove daily log files older than
+12 months when a new entry is written.
+
+## Automated regression tests
+
+The default pull-request tier runs the fast, deterministic `Unit`, `Contract`,
+and embedded-SQLite `Database` categories:
 
 ```powershell
-.\tests\Run-UiTests.ps1 -Configuration Debug
+.\tests\Run-Tests.ps1
+```
+
+Run the real Git integration boundary separately in the slower integration
+tier:
+
+```powershell
+.\tests\Run-Tests.ps1 -Tier Integration -Configuration Release
+```
+
+On Windows, the end-to-end tier launches the current Avalonia application and
+drives it through UI Automation:
+
+```powershell
+.\tests\Run-Tests.ps1 -Tier EndToEnd -Configuration Release
 ```
 
 It requires an unlocked interactive Windows session. The project remains
 outside the cross-platform solution because FlaUI/UIA3 is Windows-specific.
 See
 [`tests/NoteManager.Desktop.UiTests/README.md`](tests/NoteManager.Desktop.UiTests/README.md)
-for its user-visible search scenarios and failure artifacts.
+for its user-visible scenarios and failure artifacts, and
+[`docs/testing.md`](docs/testing.md) for the category definitions, full tier
+matrix, required services, and focused commands.
 
 The former WPF/FlaUI suite remains under `tests/NoteManager.App.UiTests` only as
 migration reference. The adjacent `tests/Test-*.ps1` scripts that launch
@@ -335,32 +368,28 @@ and daily log files below:
 ```
 
 Activation starts one scan immediately and schedules later scans every five
-minutes. Each scan asks the packaged DOC2MD CLI to search the whole vault for
-PDF, Word, spreadsheet, presentation, RTF, OpenDocument, text, HTML, and EPUB
-files. A source is converted only when the sibling path produced by replacing
-its extension with `.md` does not already exist. The plugin never passes
-DOC2MD's `--overwrite` option, so an existing Markdown counterpart is not
-changed.
+minutes. Each scan finds pending PDF, Word, spreadsheet, presentation, RTF,
+OpenDocument, text, HTML, and EPUB files, orders them by modification time with
+the newest first, and invokes DOC2MD once per document. A source is converted
+only when the sibling path produced by replacing its extension with `.md` does
+not already exist. The plugin never passes DOC2MD's `--overwrite` option, so an
+existing Markdown counterpart is not changed. A failure affects only that
+document; successful outputs from the same scan are preserved.
 
 The generated `settings.json` uses recursive conversion, local PDF processing,
-and `eng+pol` OCR by default. It also contains optional paths for DOC2MD.Cli,
-MarkItDown, LibreOffice, and Tesseract trained data. Deactivate the plugin before
-editing that file, then reactivate it to load the changes. Legacy Office and
-OpenDocument inputs require LibreOffice. Image-only PDF pages require the
-requested Tesseract language data. The default MarkItDown command points to the
-local DOC2MD environment under
-`C:\Projects\DOC2MD\.markitdown-venv\Scripts\markitdown.exe`.
+and `eng+pol` OCR by default. Deactivate the plugin before editing that file,
+then reactivate it to load the changes. DOC2MD owns its MarkItDown,
+LibreOffice, and Tesseract dependencies.
 
-The compiled CLI deployment and its Windows x64 native dependencies are kept
-under `src/NoteManager.Plugin.DocumentConversion/Assets/DOC2MD.Cli`. Building
-the plugin deploys its assembly and those assets to:
+DOC2MD is installed separately and must provide its CLI at:
 
 ```text
-src\NoteManager.Desktop\bin\<Configuration>\net10.0\Plugins\DocumentConversion
+C:\Program Files\Taskscape\DOC2MD\DOC2MD.Cli.exe
 ```
 
-Published application output contains the same
-`Plugins\DocumentConversion` directory next to `NoteManager.exe`.
+Plugin initialization fails with installation guidance when that executable is
+missing. NoteManager publishes only the plugin assembly under
+`Plugins\DocumentConversion`; it does not copy or install DOC2MD binaries.
 
 ## Git Integration plugin
 

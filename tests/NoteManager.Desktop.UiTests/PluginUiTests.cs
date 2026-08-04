@@ -6,7 +6,7 @@ namespace NoteManager.Desktop.UiTests;
 
 [TestFixture]
 [Apartment(ApartmentState.STA)]
-[Category("UI")]
+[Category("EndToEnd")]
 [NonParallelizable]
 internal sealed class PluginUiTests : UiTestBase
 {

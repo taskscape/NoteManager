@@ -4,6 +4,7 @@ using Xunit;
 
 namespace NoteManager.Plugin.DocumentConversion.Tests;
 
+[Trait("Category", "Contract")]
 public sealed class DocumentConversionOptionsTests
 {
     [Fact]
@@ -23,6 +24,33 @@ public sealed class DocumentConversionOptionsTests
         Assert.Equal(
             5,
             settings.RootElement.GetProperty("IntervalMinutes").GetInt32());
+    }
+
+    [Fact]
+    public void LoadOrCreate_RemovesLegacyExecutableOverrides()
+    {
+        using var folder = new TemporaryFolder();
+        var settingsPath = Path.Combine(folder.Path, "settings.json");
+        File.WriteAllText(
+            settingsPath,
+            """
+            {
+              "Enabled": true,
+              "IntervalMinutes": 5,
+              "Recursive": true,
+              "CommandTimeoutMinutes": 60,
+              "PdfProcessing": "local",
+              "OcrLanguages": "eng+pol",
+              "CliExecutablePath": "C:\\Old\\DOC2MD.Cli.exe",
+              "TessdataPath": "C:\\Old\\tessdata"
+            }
+            """);
+
+        DocumentConversionOptions.LoadOrCreate(folder.Path);
+
+        using var settings = JsonDocument.Parse(File.ReadAllText(settingsPath));
+        Assert.False(settings.RootElement.TryGetProperty("CliExecutablePath", out _));
+        Assert.False(settings.RootElement.TryGetProperty("TessdataPath", out _));
     }
 
     private sealed class TemporaryFolder : IDisposable

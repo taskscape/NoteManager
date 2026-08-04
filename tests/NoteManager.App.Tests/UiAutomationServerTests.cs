@@ -4,6 +4,7 @@ using Xunit;
 
 namespace NoteManager.App.Tests;
 
+[Trait("Category", "Contract")]
 public sealed class UiAutomationServerTests
 {
     [Fact]

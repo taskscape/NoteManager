@@ -6,7 +6,7 @@ namespace NoteManager.App.UiTests;
 
 [TestFixture]
 [Apartment(ApartmentState.STA)]
-[Category("UI")]
+[Category("EndToEnd")]
 internal sealed class PdfAndDragDropUiTests : UiTestBase
 {
     [Test]
