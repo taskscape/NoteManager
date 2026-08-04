@@ -9,8 +9,6 @@ Run it from an unlocked interactive Windows session:
 ```powershell
 .\tests\Run-UiTests.ps1 -Configuration Debug
 ```
-Testowy commit czy działa
-Czy działa?
 
 The suite verifies:
 
