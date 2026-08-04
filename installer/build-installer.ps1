@@ -120,6 +120,101 @@ function Resolve-Iscc {
     return $null
 }
 
+function Resolve-LatestDoc2MdRelease {
+    # Resolve the dependency during packaging so the generated installer is reproducible.
+    $releaseApiUri = "https://api.github.com/repos/taskscape/DOC2MD/releases/latest"
+    $headers = @{
+        Accept = "application/vnd.github+json"
+        "X-GitHub-Api-Version" = "2022-11-28"
+        "User-Agent" = "NoteManager-Installer-Build"
+    }
+
+    # An optional token raises GitHub API rate limits without becoming a build requirement.
+    if (-not [string]::IsNullOrWhiteSpace($env:GITHUB_TOKEN)) {
+        $headers["Authorization"] = "Bearer $($env:GITHUB_TOKEN)"
+    }
+
+    try {
+        $release = Invoke-RestMethod `
+            -Method Get `
+            -Uri $releaseApiUri `
+            -Headers $headers `
+            -TimeoutSec 30
+    }
+    catch {
+        throw "Cannot resolve the latest DOC2MD release from '$releaseApiUri': $($_.Exception.Message)"
+    }
+
+    if ($release.draft -or $release.prerelease) {
+        throw "GitHub returned DOC2MD release '$($release.tag_name)', but it is not a published full release."
+    }
+
+    $tagMatch = [System.Text.RegularExpressions.Regex]::Match(
+        [string]$release.tag_name,
+        "^v(?<version>\d+\.\d+\.\d+(?:\.\d+)?)$")
+    if (-not $tagMatch.Success) {
+        throw "The latest DOC2MD release tag '$($release.tag_name)' is not a supported numeric version."
+    }
+
+    $releaseVersion = $tagMatch.Groups["version"].Value
+    $stableAssetName = "DOC2MD-win-x64-Setup.exe"
+    $versionedAssetName = "DOC2MD-$releaseVersion-win-x64-Setup.exe"
+    $assets = @($release.assets)
+    $matchingAssets = @($assets | Where-Object { $_.name -eq $stableAssetName })
+    if ($matchingAssets.Count -eq 0) {
+        # Releases created before the stable-alias workflow remain valid dependencies.
+        $matchingAssets = @($assets | Where-Object { $_.name -eq $versionedAssetName })
+    }
+
+    if ($matchingAssets.Count -ne 1) {
+        throw "Release '$($release.tag_name)' must contain exactly one '$stableAssetName' or '$versionedAssetName' asset."
+    }
+
+    $asset = $matchingAssets[0]
+    $digestMatch = [System.Text.RegularExpressions.Regex]::Match(
+        [string]$asset.digest,
+        "^sha256:(?<digest>[0-9a-fA-F]{64})$")
+    if (-not $digestMatch.Success) {
+        throw "Release asset '$($asset.name)' does not provide a valid GitHub SHA-256 digest."
+    }
+
+    try {
+        $downloadUri = [System.Uri]$asset.browser_download_url
+    }
+    catch {
+        throw "Release asset '$($asset.name)' has an invalid browser download URL."
+    }
+
+    $expectedPathPrefix = "/taskscape/DOC2MD/releases/download/"
+    if ($downloadUri.Scheme -ne [System.Uri]::UriSchemeHttps -or
+        $downloadUri.Host -ne "github.com" -or
+        -not $downloadUri.AbsolutePath.StartsWith(
+            $expectedPathPrefix,
+            [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Release asset '$($asset.name)' does not use the expected GitHub HTTPS download location."
+    }
+
+    $versionComponents = @($releaseVersion -split "\." | ForEach-Object { [int]$_ })
+    while ($versionComponents.Count -lt 4) {
+        $versionComponents += 0
+    }
+
+    if ($versionComponents | Where-Object { $_ -lt 0 -or $_ -gt [UInt16]::MaxValue }) {
+        throw "DOC2MD version '$releaseVersion' cannot be represented by Windows file-version components."
+    }
+
+    return [pscustomobject]@{
+        Version = $releaseVersion
+        VersionMajor = $versionComponents[0]
+        VersionMinor = $versionComponents[1]
+        VersionRevision = $versionComponents[2]
+        VersionBuild = $versionComponents[3]
+        InstallerName = [string]$asset.name
+        InstallerUrl = $downloadUri.AbsoluteUri
+        InstallerSha256 = $digestMatch.Groups["digest"].Value.ToLowerInvariant()
+    }
+}
+
 if (-not (Test-Path -LiteralPath $projectPath -PathType Leaf)) {
     throw "Cannot find the NoteManager project at '$projectPath'."
 }
@@ -127,6 +222,8 @@ if (-not (Test-Path -LiteralPath $projectPath -PathType Leaf)) {
 if (-not (Test-Path -LiteralPath $issFile -PathType Leaf)) {
     throw "Cannot find the Inno Setup definition at '$issFile'."
 }
+
+$doc2MdRelease = Resolve-LatestDoc2MdRelease
 
 $versionParts = @($Version -split "\.")
 while ($versionParts.Count -lt 4) {
@@ -147,6 +244,8 @@ Write-Host "Repository root : $repoRoot"
 Write-Host "Project         : $projectPath"
 Write-Host "Runtime         : $Runtime"
 Write-Host "Version         : $Version"
+Write-Host "DOC2MD version  : $($doc2MdRelease.Version)"
+Write-Host "DOC2MD asset    : $($doc2MdRelease.InstallerName)"
 Write-Host "Publish folder  : $publishDir"
 Write-Host ""
 
@@ -212,6 +311,14 @@ $compilerArgs = @(
     "/DVersionInfoVersion=$versionInfoVersion",
     "/DInstallerArchitecture=$installerArchitecture",
     "/DOutputBaseFilename=$outputBaseFilename",
+    "/DDoc2MdVersion=$($doc2MdRelease.Version)",
+    "/DDoc2MdVersionMajor=$($doc2MdRelease.VersionMajor)",
+    "/DDoc2MdVersionMinor=$($doc2MdRelease.VersionMinor)",
+    "/DDoc2MdVersionRevision=$($doc2MdRelease.VersionRevision)",
+    "/DDoc2MdVersionBuild=$($doc2MdRelease.VersionBuild)",
+    "/DDoc2MdInstallerName=$($doc2MdRelease.InstallerName)",
+    "/DDoc2MdInstallerUrl=$($doc2MdRelease.InstallerUrl)",
+    "/DDoc2MdInstallerSha256=$($doc2MdRelease.InstallerSha256)",
     $issFile
 )
 

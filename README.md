@@ -381,7 +381,9 @@ and `eng+pol` OCR by default. Deactivate the plugin before editing that file,
 then reactivate it to load the changes. DOC2MD owns its MarkItDown,
 LibreOffice, and Tesseract dependencies.
 
-DOC2MD is installed separately and must provide its CLI at:
+The NoteManager Windows installer downloads the latest published DOC2MD release,
+verifies its SHA-256 digest, and installs it silently. Manual or non-Windows
+NoteManager installations must provide the DOC2MD CLI at:
 
 ```text
 C:\Program Files\Taskscape\DOC2MD\DOC2MD.Cli.exe
@@ -389,7 +391,8 @@ C:\Program Files\Taskscape\DOC2MD\DOC2MD.Cli.exe
 
 Plugin initialization fails with installation guidance when that executable is
 missing. NoteManager publishes only the plugin assembly under
-`Plugins\DocumentConversion`; it does not copy or install DOC2MD binaries.
+`Plugins\DocumentConversion`; its Windows installer keeps DOC2MD as a separate
+installed product instead of copying DOC2MD binaries into the plugin folder.
 
 ## Git Integration plugin
 

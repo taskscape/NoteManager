@@ -11,6 +11,8 @@ Windows and macOS.
 - Inno Setup 6 or 7. The script searches `PATH` and the standard 32-bit and
   64-bit installation folders, or accepts an explicit `-IsccPath`. Inno Setup
   is required only for the Windows setup executable.
+- Internet access to GitHub while building the Windows installer. The build
+  resolves and pins the latest published DOC2MD release and its SHA-256 digest.
 - The platform web view used by Avalonia (WebView2 on Windows and WKWebView on
   macOS) for embedded PDF display.
 - macOS 14 or newer for macOS builds, matching the supported .NET 10 runtime
@@ -79,6 +81,25 @@ Generated files:
 | `installer\Output\NoteManager-<version>-<runtime>-Setup.exe` | Finished installer. |
 
 Both generated folders are excluded from source control.
+
+The Windows installer treats DOC2MD as a separately registered prerequisite.
+At build time it resolves the latest published full release from the public
+`taskscape/DOC2MD` GitHub repository, preferring the stable
+`DOC2MD-win-x64-Setup.exe` alias while retaining compatibility with older
+versioned-only releases. At install time it downloads the pinned asset, verifies
+the GitHub-provided SHA-256 digest, and installs it silently under:
+
+```text
+C:\Program Files\Taskscape\DOC2MD
+```
+
+The download is skipped when that directory already contains the pinned or a
+newer `DOC2MD.Cli.exe`. A download, checksum, child-installer, or path-validation
+failure stops NoteManager Setup instead of installing a nonfunctional Document
+Conversion plugin. The nested installer log is retained at
+`C:\ProgramData\Taskscape\NoteManager\InstallerLogs\DOC2MD-Setup.log`.
+Uninstalling NoteManager does not uninstall the separately registered DOC2MD
+product.
 
 ## Startup optimization profile
 
