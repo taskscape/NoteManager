@@ -140,11 +140,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         {
             if (SetProperty(ref _isSearching, value))
             {
-                OnPropertyChanged(nameof(IsSearchInputEnabled));
+                OnPropertyChanged(nameof(IsSearchShortcutVisible));
             }
         }
     }
-    public bool IsSearchInputEnabled => IsSearchAvailable && !IsSearching;
+    public bool IsSearchInputEnabled => IsSearchAvailable;
+    public bool IsSearchShortcutVisible => IsSearchInputEnabled && !IsSearching;
     public string SearchPlaceholderText
         => IsIndexing
             ? "Indexing in progress"
@@ -1489,6 +1490,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     {
         OnPropertyChanged(nameof(IsSearchAvailable));
         OnPropertyChanged(nameof(IsSearchInputEnabled));
+        OnPropertyChanged(nameof(IsSearchShortcutVisible));
         OnPropertyChanged(nameof(SearchPlaceholderText));
     }
 

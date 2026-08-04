@@ -56,7 +56,7 @@ public sealed class NoteSearchViewModelTests
     }
 
     [Fact]
-    public async Task SubmittedSearch_TemporarilyDisablesTheSearchInput()
+    public async Task SubmittedSearch_KeepsTheSearchInputEnabled()
     {
         var folderPath = Directory.CreateDirectory(
             Path.Combine(
@@ -79,12 +79,14 @@ public sealed class NoteSearchViewModelTests
             viewModel.SubmitSearch();
 
             Assert.True(viewModel.IsSearching);
-            Assert.False(viewModel.IsSearchInputEnabled);
+            Assert.True(viewModel.IsSearchInputEnabled);
+            Assert.False(viewModel.IsSearchShortcutVisible);
 
             await WaitForSearchToFinishAsync(viewModel);
 
             Assert.False(viewModel.IsSearching);
             Assert.True(viewModel.IsSearchInputEnabled);
+            Assert.True(viewModel.IsSearchShortcutVisible);
         }
         finally
         {

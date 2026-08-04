@@ -240,7 +240,7 @@
                        IsHitTestVisible="False"
                        Classes="tertiary"
                        FontSize="11"
-                       IsVisible="{Binding IsSearchInputEnabled}"
+                       IsVisible="{Binding IsSearchShortcutVisible}"
                        Text="Ctrl/⌘ F" />
             <ProgressBar Width="30"
                          Height="3"

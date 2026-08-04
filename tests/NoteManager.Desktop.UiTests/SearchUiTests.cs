@@ -35,6 +35,20 @@ internal sealed class SearchUiTests : UiTestBase
     }
 
     [Test]
+    public void TypingAfterACompletedLiveSearch_DoesNotRequireRefocusingTheSearchBox()
+    {
+        var app = Launch();
+
+        app.FocusSearchAndType("project");
+        app.WaitForNoteCount(3);
+
+        app.TypeWithoutRefocusing(" plan");
+
+        app.WaitForSearchText("project plan");
+        app.WaitForNoteCount(2);
+    }
+
+    [Test]
     public void StrictSearch_PhrasesFieldsAndLiteralSymbols_FilterTheVisibleList()
     {
         var app = Launch();

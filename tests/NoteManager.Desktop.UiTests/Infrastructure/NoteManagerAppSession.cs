@@ -154,6 +154,24 @@ internal sealed class NoteManagerAppSession : IDisposable
         Keyboard.Press(VirtualKeyShort.RETURN);
     }
 
+    public void FocusSearchAndType(string value)
+    {
+        MainWindow.Focus();
+        WaitForByAutomationId("SearchBox").AsTextBox().Focus();
+        Keyboard.Type(value);
+    }
+
+    public void TypeWithoutRefocusing(string value)
+        => Keyboard.Type(value);
+
+    public void WaitForSearchText(string expectedText)
+        => UiWait.Until(
+            () => WaitForByAutomationId("SearchBox")
+                .AsTextBox()
+                .Text
+                .Equals(expectedText, StringComparison.Ordinal),
+            $"search text to be '{expectedText}'");
+
     public void WaitForNoteCount(int expectedCount)
         => WaitForElementText(
             "VisibleNoteCountText",
