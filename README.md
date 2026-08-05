@@ -12,6 +12,28 @@ From the repository root on Windows or macOS:
 dotnet run --project src/NoteManager.Desktop/NoteManager.Desktop.csproj
 ```
 
+The repository pins the .NET 8 SDK through `global.json`. On startup, the application recursively loads the Obsidian vault at:
+On macOS or Linux, the included launcher compiles the app and starts it:
+
+```bash
+./run-notemanager.sh
+```
+
+Application arguments are forwarded unchanged:
+
+```bash
+./run-notemanager.sh --folder SampleNotes
+```
+
+Set `NOTEMANAGER_CONFIGURATION=Release` to build and start a Release build.
+
+The repository pins the .NET 10 SDK through `global.json`. On startup, the application recursively loads the Obsidian vault at:
+
+```text
+C:\Projects\Obsidian
+```
+
+Use **File → Open folder…** or `Ctrl+O` to switch to another Markdown folder.
 The repository pins the .NET 10 SDK through `global.json`. On startup, the
 application opens the folder supplied with `--folder`, or the last folder that
 was opened successfully. If neither is available, use **File → Open folder…**,

@@ -11,3 +11,6 @@ installer/Output/
 *.suo
 **/.DS_Store
 SampleNotes
+.vscode
+installer/publish-macos/osx-arm64
+installer/publish-windows/win-x64
