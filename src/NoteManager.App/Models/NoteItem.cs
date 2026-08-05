@@ -1,4 +1,3 @@
-using System.IO;
 using NoteManager.App.Infrastructure;
 
 namespace NoteManager.App.Models;

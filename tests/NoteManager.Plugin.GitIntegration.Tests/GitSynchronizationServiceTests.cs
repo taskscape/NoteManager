@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using NoteManager.Plugin.GitIntegration;
 using NoteManager.Plugins;
 using Xunit;
 

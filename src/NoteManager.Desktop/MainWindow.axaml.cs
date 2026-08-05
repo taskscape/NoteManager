@@ -1,6 +1,5 @@
 using Avalonia.Controls;
 using Avalonia.Input;
-using Avalonia.Input.Platform;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
@@ -60,11 +59,35 @@ public partial class MainWindow : Window
         Opened += MainWindow_OnOpened;
         Closing += MainWindow_OnClosing;
         KeyDown += MainWindow_OnKeyDown;
+        NoteScrollViewer.AddHandler(
+            PointerWheelChangedEvent,
+            NoteScrollViewer_OnPointerWheelChanged,
+            RoutingStrategies.Tunnel,
+            handledEventsToo: true);
         DragDrop.AddDragOverHandler(this, MainWindow_OnDragOver);
         DragDrop.AddDropHandler(this, MainWindow_OnDrop);
     }
 
     private MainViewModel ViewModel => (MainViewModel)DataContext!;
+
+    private void NoteScrollViewer_OnPointerWheelChanged(
+        object? sender,
+        PointerWheelEventArgs e)
+    {
+        if (NoteScrollCoordinator.IsModifiedGesture(e.KeyModifiers)
+            || e.Delta.Y == 0)
+        {
+            return;
+        }
+
+        if (NoteScrollCoordinator.ScrollBy(
+                NoteScrollViewer,
+                -e.Delta.Y,
+                ScrollDeltaMode.Line))
+        {
+            e.Handled = true;
+        }
+    }
 
     private void SelectedNoteTitle_OnClick(
         object? sender,

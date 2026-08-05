@@ -1,7 +1,5 @@
-using System.IO;
 using System.IO.Compression;
 using System.Text;
-using System.Xml;
 using NoteManager.App.Models;
 
 namespace NoteManager.App.Services;

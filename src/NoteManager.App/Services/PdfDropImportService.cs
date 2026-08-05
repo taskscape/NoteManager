@@ -1,5 +1,3 @@
-using System.IO;
-
 namespace NoteManager.App.Services;
 
 public sealed record ImportedPdf(

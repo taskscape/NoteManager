@@ -364,10 +364,13 @@
             </Button>
           </Grid>
 
-          <ScrollViewer Grid.Row="1"
+          <ScrollViewer x:Name="NoteScrollViewer"
+                        Grid.Row="1"
                         Margin="0,20,0,0"
+                        AllowAutoHide="False"
+                        AutomationProperties.AutomationId="NoteScrollViewer"
                         HorizontalScrollBarVisibility="Disabled"
-                        VerticalScrollBarVisibility="Auto">
+                        VerticalScrollBarVisibility="Visible">
             <StackPanel Spacing="15">
               <ItemsControl ItemsSource="{Binding SelectedNote.Tags}">
                 <ItemsControl.ItemsPanel>

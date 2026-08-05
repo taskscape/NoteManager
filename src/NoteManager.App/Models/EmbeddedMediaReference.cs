@@ -1,5 +1,3 @@
-using System.IO;
-
 namespace NoteManager.App.Models;
 
 public enum EmbeddedMediaKind

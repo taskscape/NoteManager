@@ -1,7 +1,6 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
-using System.IO;
 using System.Text;
 using NoteManager.App.Infrastructure;
 using NoteManager.App.Models;

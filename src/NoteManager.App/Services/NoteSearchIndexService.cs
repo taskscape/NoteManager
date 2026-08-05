@@ -1,4 +1,3 @@
-using System.IO;
 using Microsoft.Data.Sqlite;
 
 namespace NoteManager.App.Services;

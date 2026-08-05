@@ -1,19 +1,51 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
+using Avalonia.VisualTree;
+using System.Runtime.InteropServices;
+using System.Text.Json;
 
 namespace NoteManager.Desktop.Controls;
 
 public partial class PdfViewer : UserControl
 {
+    private const string NoteScrollMessageType = "note-scroll";
+
+    private const string NoteScrollBridgeScript = """
+        (() => {
+            if (window.__noteManagerNoteScrollBridgeInstalled) {
+                return;
+            }
+
+            window.__noteManagerNoteScrollBridgeInstalled = true;
+            window.addEventListener('wheel', event => {
+                if (event.defaultPrevented
+                    || event.deltaY === 0
+                    || event.ctrlKey
+                    || event.metaKey
+                    || event.altKey
+                    || event.shiftKey) {
+                    return;
+                }
+
+                event.preventDefault();
+                invokeCSharpAction(JSON.stringify({
+                    type: 'note-scroll',
+                    deltaY: event.deltaY,
+                    deltaMode: event.deltaMode
+                }));
+            }, { capture: true, passive: false });
+        })();
+        """;
+
     public static readonly StyledProperty<string?> PdfPathProperty =
         AvaloniaProperty.Register<PdfViewer, string?>(nameof(PdfPath));
 
     public PdfViewer()
     {
         InitializeComponent();
-        WebView.NavigationCompleted += (_, _) =>
-            StatusText.Text = "Interactive PDF ready";
+        WebView.NavigationCompleted += WebView_OnNavigationCompleted;
+        WebView.WebMessageReceived += WebView_OnWebMessageReceived;
     }
 
     public string? PdfPath
@@ -42,6 +74,88 @@ public partial class PdfViewer : UserControl
 
         StatusText.Text = "Loading interactive PDF…";
         WebView.Source = new Uri(Path.GetFullPath(path));
+    }
+
+    private async void WebView_OnNavigationCompleted(
+        object? sender,
+        WebViewNavigationCompletedEventArgs e)
+    {
+        if (!e.IsSuccess)
+        {
+            StatusText.Text = "The PDF could not be displayed";
+            return;
+        }
+
+        StatusText.Text = "Interactive PDF ready";
+        try
+        {
+            await WebView.InvokeScript(NoteScrollBridgeScript);
+        }
+        catch (Exception exception) when (
+            exception is InvalidOperationException
+            or NotSupportedException
+            or COMException)
+        {
+            // The PDF remains usable when a platform WebView does not support
+            // script injection. The always-visible note scrollbar is the fallback.
+        }
+    }
+
+    private void WebView_OnWebMessageReceived(
+        object? sender,
+        WebMessageReceivedEventArgs e)
+    {
+        if (!TryReadNoteScrollMessage(e.Body, out var deltaY, out var deltaMode))
+        {
+            return;
+        }
+
+        var noteScrollViewer = this
+            .GetVisualAncestors()
+            .OfType<ScrollViewer>()
+            .FirstOrDefault();
+        if (noteScrollViewer is not null)
+        {
+            NoteScrollCoordinator.ScrollBy(noteScrollViewer, deltaY, deltaMode);
+        }
+    }
+
+    private static bool TryReadNoteScrollMessage(
+        string? body,
+        out double deltaY,
+        out ScrollDeltaMode deltaMode)
+    {
+        deltaY = 0;
+        deltaMode = ScrollDeltaMode.Pixel;
+
+        try
+        {
+            if (string.IsNullOrWhiteSpace(body))
+            {
+                return false;
+            }
+
+            using var document = JsonDocument.Parse(body);
+            var root = document.RootElement;
+            if (!root.TryGetProperty("type", out var type)
+                || type.GetString() != NoteScrollMessageType
+                || !root.TryGetProperty("deltaY", out var delta)
+                || !delta.TryGetDouble(out deltaY)
+                || !double.IsFinite(deltaY)
+                || !root.TryGetProperty("deltaMode", out var mode)
+                || !mode.TryGetInt32(out var modeValue)
+                || !Enum.IsDefined((ScrollDeltaMode)modeValue))
+            {
+                return false;
+            }
+
+            deltaMode = (ScrollDeltaMode)modeValue;
+            return true;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
     }
 
     private async void OpenExternally_OnClick(object? sender, RoutedEventArgs e)
