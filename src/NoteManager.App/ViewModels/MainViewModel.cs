@@ -25,6 +25,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private bool _isSharePanelOpen;
     private bool _isSynced;
     private bool _isFolderMode;
+    private bool _isGitStatusVisible;
     private bool _isLoadingFolder;
     private bool _isIndexing;
     private bool _isPublishing;
@@ -33,6 +34,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private string _statusText = string.Empty;
     private string _centerHeading = "All notes";
     private string _currentFolderPath = string.Empty;
+    private string _gitStatusText = "GIT synced";
     private string _searchIndexStatus = string.Empty;
     private string _shareStatusText = string.Empty;
     private NoteSortType _selectedSortType = NoteSortType.Updated;
@@ -324,6 +326,18 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     {
         get => _searchIndexStatus;
         private set => SetProperty(ref _searchIndexStatus, value);
+    }
+
+    public string GitStatusText
+    {
+        get => _gitStatusText;
+        set => SetProperty(ref _gitStatusText, value);
+    }
+
+    public bool IsGitStatusVisible
+    {
+        get => _isGitStatusVisible;
+        set => SetProperty(ref _isGitStatusVisible, value);
     }
 
     public string StatusText

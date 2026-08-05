@@ -29,16 +29,19 @@ public sealed class GitSynchronizationServiceTests
             var service = new GitSynchronizationService(
                 new GitProcessRunner("git", TimeSpan.FromSeconds(30)),
                 new GitSynchronizationLog(configurationDirectory));
+            var indicatorUpdates = new List<PluginIndicatorStatus>();
             var context = new PluginHostContext(
                 root.FullName,
                 configurationDirectory,
                 _ => Task.FromResult(true),
-                _ => { });
+                _ => { },
+                indicatorUpdates.Add);
 
             var result = await service.SynchronizeAsync(context);
 
             Assert.True(result.Skipped);
             Assert.Contains("Another NoteManager", result.Message);
+            Assert.Equal("GIT error", Assert.Single(indicatorUpdates).Text);
         }
         finally
         {
@@ -84,6 +87,7 @@ public sealed class GitSynchronizationServiceTests
             "new nested dot file");
 
         var statusUpdates = new List<string>();
+        var indicatorUpdates = new List<PluginIndicatorStatus>();
         var configurationDirectory = Path.Combine(
             repository.WorkingCopy,
             ".note",
@@ -96,13 +100,17 @@ public sealed class GitSynchronizationServiceTests
             repository.WorkingCopy,
             configurationDirectory,
             _ => Task.FromResult(true),
-            statusUpdates.Add);
+            statusUpdates.Add,
+            indicatorUpdates.Add);
 
         var result = await service.SynchronizeAsync(context);
 
         Assert.True(result.Succeeded, result.Message);
         Assert.Contains(statusUpdates, status =>
             status.Contains("complete", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(
+            ["GIT pulling", "GIT pushing", "GIT synced"],
+            indicatorUpdates.Select(update => update.Text));
 
         repository.CloneForVerification();
         Assert.Equal(

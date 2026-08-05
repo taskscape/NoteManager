@@ -8,6 +8,30 @@ public sealed record GitSynchronizationResult(
     string Message,
     int ChangedPathCount = 0);
 
+internal static class GitSynchronizationIndicators
+{
+    public const string Synced = "GIT synced";
+    public const string Error = "GIT error";
+    public const string Pushing = "GIT pushing";
+    public const string Pulling = "GIT pulling";
+
+    public static void ReportSynced(PluginHostContext context)
+        => Report(context, Synced);
+
+    public static void ReportError(PluginHostContext context)
+        => Report(context, Error);
+
+    public static void ReportPushing(PluginHostContext context)
+        => Report(context, Pushing);
+
+    public static void ReportPulling(PluginHostContext context)
+        => Report(context, Pulling);
+
+    private static void Report(PluginHostContext context, string text)
+        => context.ReportIndicatorStatus?.Invoke(
+            new PluginIndicatorStatus(GitIntegrationPlugin.PluginId, text));
+}
+
 public sealed class GitSynchronizationService(
     GitProcessRunner runner,
     GitSynchronizationLog log,
@@ -35,6 +59,7 @@ public sealed class GitSynchronizationService(
         {
             const string message =
                 "Another NoteManager process is synchronizing this repository.";
+            GitSynchronizationIndicators.ReportError(context);
             context.ReportStatus(message);
             return new GitSynchronizationResult(false, true, message);
         }
@@ -43,6 +68,7 @@ public sealed class GitSynchronizationService(
         var state = await _inspector.InspectAsync(context.VaultPath, cancellationToken);
         if (!state.CanSynchronize)
         {
+            GitSynchronizationIndicators.ReportError(context);
             await LogAndReportAsync(context, $"Git synchronization skipped: {state.Message}", cancellationToken);
             return new GitSynchronizationResult(false, true, state.Message);
         }
@@ -51,10 +77,12 @@ public sealed class GitSynchronizationService(
         if (!await context.SaveActiveNoteAsync(cancellationToken))
         {
             const string message = "The active note could not be saved; Git synchronization stopped.";
+            GitSynchronizationIndicators.ReportError(context);
             await LogAndReportAsync(context, message, cancellationToken);
             return new GitSynchronizationResult(false, false, message);
         }
 
+        GitSynchronizationIndicators.ReportPulling(context);
         context.ReportStatus("Pulling remote Git changes…");
         var pull = await RunLoggedAsync(
             context.VaultPath,
@@ -68,6 +96,7 @@ public sealed class GitSynchronizationService(
         var refreshedState = await _inspector.InspectAsync(context.VaultPath, cancellationToken);
         if (!refreshedState.CanSynchronize)
         {
+            GitSynchronizationIndicators.ReportError(context);
             await LogAndReportAsync(
                 context,
                 $"Git synchronization stopped after pull: {refreshedState.Message}",
@@ -144,6 +173,7 @@ public sealed class GitSynchronizationService(
         {
             var message =
                 $"Git staging was stopped because untracked dot-prefixed path '{prohibitedPath}' was staged.";
+            GitSynchronizationIndicators.ReportError(context);
             await LogAndReportAsync(context, message, cancellationToken);
             return new GitSynchronizationResult(false, false, message);
         }
@@ -177,6 +207,7 @@ public sealed class GitSynchronizationService(
             }
         }
 
+        GitSynchronizationIndicators.ReportPushing(context);
         context.ReportStatus("Pushing Git changes…");
         var push = await RunLoggedAsync(
             context.VaultPath,
@@ -190,6 +221,7 @@ public sealed class GitSynchronizationService(
         var success = stagedPaths.Count == 0
             ? $"Git synchronization complete on {state.Branch}; no local changes were committed."
             : $"Git synchronization complete on {state.Branch}; {stagedPaths.Count:N0} path(s) committed.";
+        GitSynchronizationIndicators.ReportSynced(context);
         await LogAndReportAsync(context, success, cancellationToken);
         return new GitSynchronizationResult(true, false, success, stagedPaths.Count);
     }
@@ -226,6 +258,7 @@ public sealed class GitSynchronizationService(
                 ? "command was cancelled"
                 : Bound(result.StandardError);
         var message = $"{operation}: {detail}";
+        GitSynchronizationIndicators.ReportError(context);
         await LogAndReportAsync(context, message, CancellationToken.None);
         return new GitSynchronizationResult(false, false, message);
     }

@@ -9,6 +9,7 @@ using NoteManager.App.Services;
 using NoteManager.App.ViewModels;
 using NoteManager.Desktop.Dialogs;
 using NoteManager.Desktop.Services;
+using NoteManager.Plugins;
 
 namespace NoteManager.Desktop;
 
@@ -55,7 +56,9 @@ public partial class MainWindow : Window
         _pluginManager = new PluginManager(
             AppContext.BaseDirectory,
             SaveActiveNoteForPluginAsync,
-            ReportPluginStatus);
+            ReportPluginStatus,
+            ReportPluginIndicatorStatus,
+            ReportPluginIndicatorVisibility);
         Opened += MainWindow_OnOpened;
         Closing += MainWindow_OnClosing;
         KeyDown += MainWindow_OnKeyDown;
@@ -227,6 +230,7 @@ public partial class MainWindow : Window
                 _activityLog.TryWriteFolderRestoredFromPreviousSession(
                     ViewModel.CurrentFolderPath);
             }
+            ViewModel.GitStatusText = "GIT synced";
             await _pluginManager.SetVaultAsync(ViewModel.CurrentFolderPath);
         }
     }
@@ -587,5 +591,29 @@ public partial class MainWindow : Window
         => Dispatcher.UIThread.Post(
             () => ViewModel.StatusText = message,
             DispatcherPriority.Normal);
+
+    private void ReportPluginIndicatorStatus(PluginIndicatorStatus status)
+    {
+        if (!status.PluginId.Equals("git-integration", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        Dispatcher.UIThread.Post(
+            () => ViewModel.GitStatusText = status.Text,
+            DispatcherPriority.Normal);
+    }
+
+    private void ReportPluginIndicatorVisibility(string pluginId, bool isVisible)
+    {
+        if (!pluginId.Equals("git-integration", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        Dispatcher.UIThread.Post(
+            () => ViewModel.IsGitStatusVisible = isVisible,
+            DispatcherPriority.Normal);
+    }
 
 }

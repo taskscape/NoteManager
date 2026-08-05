@@ -17,8 +17,13 @@ public sealed record PluginMetadata(
     string Description,
     string Version);
 
+public sealed record PluginIndicatorStatus(
+    string PluginId,
+    string Text);
+
 public sealed record PluginHostContext(
     string VaultPath,
     string ConfigurationDirectory,
     Func<CancellationToken, Task<bool>> SaveActiveNoteAsync,
-    Action<string> ReportStatus);
+    Action<string> ReportStatus,
+    Action<PluginIndicatorStatus>? ReportIndicatorStatus = null);

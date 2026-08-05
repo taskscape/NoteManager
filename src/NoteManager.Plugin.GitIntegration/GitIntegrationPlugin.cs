@@ -4,12 +4,14 @@ namespace NoteManager.Plugin.GitIntegration;
 
 public sealed class GitIntegrationPlugin : INoteManagerPlugin
 {
+    internal const string PluginId = "git-integration";
+
     private readonly SemaphoreSlim _lifecycleLock = new(1, 1);
     private CancellationTokenSource? _cancellation;
     private Task? _scheduler;
 
     public PluginMetadata Metadata { get; } = new(
-        "git-integration",
+        PluginId,
         "Git Integration",
         "Automatically pulls, commits, and pushes an already configured notes repository.",
         "1.0.0");
@@ -26,6 +28,7 @@ public sealed class GitIntegrationPlugin : INoteManagerPlugin
                 context.ConfigurationDirectory);
             if (!options.Enabled)
             {
+                GitSynchronizationIndicators.ReportError(context);
                 context.ReportStatus("Git Integration is activated but disabled in its settings file.");
                 return;
             }
@@ -35,8 +38,14 @@ public sealed class GitIntegrationPlugin : INoteManagerPlugin
             var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
                 _cancellation.Token);
             _scheduler = RunSchedulerAsync(context, options, linkedCancellation);
+            GitSynchronizationIndicators.ReportSynced(context);
             context.ReportStatus(
                 $"Git synchronization scheduled every {options.IntervalMinutes:N0} minute(s).");
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            GitSynchronizationIndicators.ReportError(context);
+            throw;
         }
         finally
         {
@@ -96,6 +105,7 @@ public sealed class GitIntegrationPlugin : INoteManagerPlugin
             }
             catch (Exception exception)
             {
+                GitSynchronizationIndicators.ReportError(context);
                 try
                 {
                     await log.WriteAsync(

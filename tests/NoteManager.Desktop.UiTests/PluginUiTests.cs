@@ -23,8 +23,14 @@ internal sealed class PluginUiTests : UiTestBase
             app.WaitForDesktopByName("Document Conversion"),
             Is.Not.Null);
         Assert.That(toggle.IsChecked, Is.False);
+        Assert.That(
+            app.MainWindow.FindFirstDescendant(conditionFactory =>
+                conditionFactory.ByAutomationId("GitStatusText")),
+            Is.Null,
+            "The Git status must be hidden while the plugin is inactive.");
 
         toggle.Toggle();
+        app.WaitForGitStatus("GIT synced");
 
         var activationPath = Path.Combine(
             Vault.RootPath,

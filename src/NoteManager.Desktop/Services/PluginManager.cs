@@ -67,16 +67,22 @@ public sealed class PluginManager
     private readonly PluginActivationStore _activationStore = new();
     private readonly Func<CancellationToken, Task<bool>> _saveActiveNoteAsync;
     private readonly Action<string> _reportStatus;
+    private readonly Action<PluginIndicatorStatus> _reportIndicatorStatus;
+    private readonly Action<string, bool> _reportIndicatorVisibility;
     private HashSet<string> _enabledPluginIds = new(StringComparer.OrdinalIgnoreCase);
     private string? _vaultPath;
 
     public PluginManager(
         string applicationDirectory,
         Func<CancellationToken, Task<bool>> saveActiveNoteAsync,
-        Action<string> reportStatus)
+        Action<string> reportStatus,
+        Action<PluginIndicatorStatus> reportIndicatorStatus,
+        Action<string, bool> reportIndicatorVisibility)
     {
         _saveActiveNoteAsync = saveActiveNoteAsync;
         _reportStatus = reportStatus;
+        _reportIndicatorStatus = reportIndicatorStatus;
+        _reportIndicatorVisibility = reportIndicatorVisibility;
 
         var catalog = new PluginCatalog();
         Plugins = new ObservableCollection<PluginListItemViewModel>(
@@ -115,6 +121,7 @@ public sealed class PluginManager
 
             foreach (var entry in Plugins)
             {
+                _reportIndicatorVisibility(entry.Id, false);
                 entry.CanChangeActivation = entry.IsAvailable;
                 entry.NotifyActivationAvailabilityChanged();
                 entry.IsEnabled = _enabledPluginIds.Contains(entry.Id);
@@ -167,6 +174,7 @@ public sealed class PluginManager
             else
             {
                 await StopEntryAsync(entry, cancellationToken);
+                _reportIndicatorVisibility(entry.Id, false);
                 _enabledPluginIds.Remove(entry.Id);
                 entry.IsEnabled = false;
                 entry.Status = "Available";
@@ -210,15 +218,18 @@ public sealed class PluginManager
                 _vaultPath,
                 configurationDirectory,
                 _saveActiveNoteAsync,
-                _reportStatus);
+                _reportStatus,
+                _reportIndicatorStatus);
             await entry.DiscoveredPlugin.Instance.StartAsync(context, cancellationToken);
             entry.IsRunning = true;
             entry.Status = "Active";
+            _reportIndicatorVisibility(entry.Id, true);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             entry.IsRunning = false;
             entry.Status = $"Could not start: {exception.Message}";
+            _reportIndicatorVisibility(entry.Id, false);
             _reportStatus($"{entry.Name} could not start: {exception.Message}");
         }
     }
@@ -241,6 +252,7 @@ public sealed class PluginManager
         foreach (var entry in Plugins.Where(plugin => plugin.IsRunning))
         {
             await StopEntryAsync(entry, cancellationToken);
+            _reportIndicatorVisibility(entry.Id, false);
             entry.Status = entry.IsEnabled ? "Inactive" : "Available";
         }
     }

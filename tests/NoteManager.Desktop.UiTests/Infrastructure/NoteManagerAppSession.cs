@@ -213,6 +213,9 @@ internal sealed class NoteManagerAppSession : IDisposable
         WaitForSearchBoxEnabled(expected: true);
     }
 
+    public void WaitForGitStatus(string expected)
+        => WaitForElementText("GitStatusText", expected);
+
     public void WaitForSearchBoxEnabled(bool expected)
         => UiWait.Until(
             () => WaitForByAutomationId("SearchBox").IsEnabled == expected,
