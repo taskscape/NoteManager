@@ -4,6 +4,9 @@ NoteManager is a cross-platform .NET 10 desktop application built with Avalonia.
 It provides tag navigation, a searchable note list, Markdown editing, note
 metadata, PDF embeds, and public-link publishing on Windows and macOS.
 
+It's repository compatible with Obsidian but it's far easier to use and also 
+far faster to search repository contents than your Obsidian would ever be.
+
 ## Run
 
 From the repository root on Windows or macOS:
