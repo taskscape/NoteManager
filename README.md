@@ -185,7 +185,14 @@ On macOS:
 ./installer/build-macos.sh 1.0.0 osx-arm64
 ```
 
-Use `osx-x64` for Intel Macs.
+This creates a re-runnable, drag-to-Applications DMG and SHA-256 checksum under
+`installer/Output`. The runtime argument is optional and defaults to the build
+Mac's architecture. With no signing environment variables, the package is
+ad-hoc signed for internal testing. For a public, Gatekeeper-friendly release,
+set both `NOTEMANAGER_CODESIGN_IDENTITY` and `NOTEMANAGER_NOTARY_PROFILE`; the
+script then applies Hardened Runtime signing, notarizes and staples the DMG, and
+performs final policy checks. See [`installer/README.md`](installer/README.md)
+for credential setup and Intel Mac builds.
 
 ## Included interactions
 

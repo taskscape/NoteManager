@@ -119,6 +119,7 @@ public sealed class PluginManager
                 _reportStatus($"Plugin activation configuration could not be read: {exception.Message}");
             }
 
+            var activationChanged = false;
             foreach (var entry in Plugins)
             {
                 _reportIndicatorVisibility(entry.Id, false);
@@ -129,7 +130,17 @@ public sealed class PluginManager
                 if (entry.IsEnabled)
                 {
                     await StartEntryAsync(entry, cancellationToken);
+                    if (!entry.IsRunning)
+                    {
+                        entry.IsEnabled = false;
+                        activationChanged |= _enabledPluginIds.Remove(entry.Id);
+                    }
                 }
+            }
+
+            if (activationChanged)
+            {
+                _activationStore.Save(_vaultPath, _enabledPluginIds);
             }
         }
         finally

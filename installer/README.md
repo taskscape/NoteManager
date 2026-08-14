@@ -118,17 +118,47 @@ but the target computer does not need a separately installed .NET runtime.
 
 ### macOS
 
-From macOS, build a self-contained application bundle for the current
-architecture:
+From macOS, build a self-contained drag-to-Applications disk image for the
+current architecture:
 
 ```bash
 ./installer/build-macos.sh 1.0.0 osx-arm64
 ```
 
-Use `osx-x64` for Intel Macs. The application bundle is written to
-`installer/Output/NoteManager-<version>-<runtime>.app`. Set
-`NOTEMANAGER_CODESIGN_IDENTITY` to sign the bundle during the build; otherwise
-an ad-hoc signature is applied when `codesign` is available.
+The runtime argument is optional and defaults to `osx-arm64` on Apple Silicon
+or `osx-x64` on Intel. The script is safe to rerun: it builds in a temporary
+directory and atomically replaces only its exact versioned DMG and checksum
+after all verification succeeds. Generated files are:
+
+```text
+installer/Output/NoteManager-1.0.0-osx-arm64.dmg
+installer/Output/NoteManager-1.0.0-osx-arm64.dmg.sha256
+```
+
+Without release credentials, the app and DMG receive ad-hoc signatures for
+internal testing. For public distribution, install a `Developer ID
+Application` certificate and save notarization credentials once:
+
+```bash
+xcrun notarytool store-credentials "NoteManager-Notary" \
+  --apple-id "developer@example.com" \
+  --team-id "TEAMID" \
+  --password "app-specific-password"
+```
+
+Then build the public package:
+
+```bash
+NOTEMANAGER_CODESIGN_IDENTITY="Developer ID Application: Example Company (TEAMID)" \
+NOTEMANAGER_NOTARY_PROFILE="NoteManager-Notary" \
+  ./installer/build-macos.sh 1.0.0 osx-arm64
+```
+
+Developer ID builds enable Hardened Runtime and secure timestamps, grant the
+JIT entitlement required by the self-contained .NET runtime, sign nested .NET
+application content from the inside out, notarize and staple the DMG, and run
+signature, disk-image, Gatekeeper, and system-policy validation. The script
+refuses to produce a Developer ID build without a notary profile.
 
 ## Install
 
