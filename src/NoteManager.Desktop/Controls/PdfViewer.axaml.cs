@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.VisualTree;
+using NoteManager.App.Services;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 
@@ -73,7 +74,22 @@ public partial class PdfViewer : UserControl
         }
 
         StatusText.Text = "Loading interactive PDF…";
-        WebView.Source = new Uri(Path.GetFullPath(path));
+        try
+        {
+            WebView.Source = new Uri(Path.GetFullPath(path));
+        }
+        catch (Exception exception) when (
+            exception is InvalidOperationException
+            or NotSupportedException
+            or COMException
+            or ArgumentException
+            or UriFormatException)
+        {
+            new ApplicationActivityLog().TryWriteUnhandledException(
+                "PdfViewer.Navigate",
+                exception);
+            StatusText.Text = $"The PDF could not be displayed: {exception.Message}";
+        }
     }
 
     private async void WebView_OnNavigationCompleted(

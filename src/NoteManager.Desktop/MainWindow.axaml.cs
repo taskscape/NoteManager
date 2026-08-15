@@ -181,32 +181,46 @@ public partial class MainWindow : Window
         }
 
         _started = true;
-        StartAutomationServer();
-        _activityLog.TryWriteApplicationOpened();
-        var folderFromPreviousSession = _options.FolderPath is null
-                                        ? _lastOpenedFolderService.ReadExistingFolder()
-                                        : null;
-        var folder = _options.FolderPath ?? folderFromPreviousSession;
-        if (!string.IsNullOrWhiteSpace(folder) && Directory.Exists(folder))
+        try
         {
-            await LoadFolderAsync(
-                folder,
-                folderFromPreviousSession is not null
-                    ? FolderOpenSource.PreviousSession
-                    : FolderOpenSource.Other);
+            StartAutomationServer();
+            _activityLog.TryWriteApplicationOpened();
+            var folderFromPreviousSession = _options.FolderPath is null
+                                            ? _lastOpenedFolderService.ReadExistingFolder()
+                                            : null;
+            var folder = _options.FolderPath ?? folderFromPreviousSession;
+            if (!string.IsNullOrWhiteSpace(folder) && Directory.Exists(folder))
+            {
+                await LoadFolderAsync(
+                    folder,
+                    folderFromPreviousSession is not null
+                        ? FolderOpenSource.PreviousSession
+                        : FolderOpenSource.Other);
+            }
+            else
+            {
+                await RequireFolderSelectionAsync();
+            }
         }
-        else
+        catch (Exception exception)
         {
-            await RequireFolderSelectionAsync();
+            ReportUnhandled("MainWindow.Opened", exception);
         }
     }
 
     private async void OpenFolder_OnClick(object? sender, RoutedEventArgs e)
     {
-        var folder = await PickFolderAsync();
-        if (!string.IsNullOrWhiteSpace(folder))
+        try
         {
-            await LoadFolderAsync(folder, FolderOpenSource.UserSelection);
+            var folder = await PickFolderAsync();
+            if (!string.IsNullOrWhiteSpace(folder))
+            {
+                await LoadFolderAsync(folder, FolderOpenSource.UserSelection);
+            }
+        }
+        catch (Exception exception)
+        {
+            ReportUnhandled("MainWindow.OpenFolder", exception);
         }
     }
 
@@ -214,25 +228,38 @@ public partial class MainWindow : Window
         string folder,
         FolderOpenSource source = FolderOpenSource.Other)
     {
-        await ViewModel.LoadMarkdownFolderAsync(folder);
-        if (ViewModel.IsFolderMode
-            && Path.GetFullPath(folder).Equals(
-                ViewModel.CurrentFolderPath,
-                StringComparison.Ordinal))
+        try
         {
-            _lastOpenedFolderService.TrySave(ViewModel.CurrentFolderPath);
-            if (source == FolderOpenSource.UserSelection)
+            await ViewModel.LoadMarkdownFolderAsync(folder);
+            if (ViewModel.IsFolderMode
+                && Path.GetFullPath(folder).Equals(
+                    ViewModel.CurrentFolderPath,
+                    StringComparison.Ordinal))
             {
-                _activityLog.TryWriteFolderSelected(ViewModel.CurrentFolderPath);
+                _lastOpenedFolderService.TrySave(ViewModel.CurrentFolderPath);
+                if (source == FolderOpenSource.UserSelection)
+                {
+                    _activityLog.TryWriteFolderSelected(ViewModel.CurrentFolderPath);
+                }
+                else if (source == FolderOpenSource.PreviousSession)
+                {
+                    _activityLog.TryWriteFolderRestoredFromPreviousSession(
+                        ViewModel.CurrentFolderPath);
+                }
+                ViewModel.GitStatusText = "GIT synced";
+                await _pluginManager.SetVaultAsync(ViewModel.CurrentFolderPath);
             }
-            else if (source == FolderOpenSource.PreviousSession)
-            {
-                _activityLog.TryWriteFolderRestoredFromPreviousSession(
-                    ViewModel.CurrentFolderPath);
-            }
-            ViewModel.GitStatusText = "GIT synced";
-            await _pluginManager.SetVaultAsync(ViewModel.CurrentFolderPath);
         }
+        catch (Exception exception)
+        {
+            ReportUnhandled("folder open", exception);
+        }
+    }
+
+    private void ReportUnhandled(string source, Exception exception)
+    {
+        _activityLog.TryWriteUnhandledException(source, exception);
+        ViewModel.StatusText = $"NoteManager hit an unexpected error: {exception.Message}";
     }
 
     private async Task RequireFolderSelectionAsync()

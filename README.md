@@ -66,8 +66,10 @@ is stored outside the selected repository:
 %LOCALAPPDATA%\NoteManager\logs\Application-YYYY-MM-DD.log
 ```
 
-It records application startup, a repository folder selected by the user, and
-a repository folder restored from a previous session. Each enabled plugin
+It records application startup, a repository folder selected by the user, a
+repository folder restored from a previous session, and unhandled exceptions
+(type, message, and stack). Crash records are flushed to disk immediately.
+Each enabled plugin
 writes its own daily log inside the selected vault:
 
 ```text

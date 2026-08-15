@@ -1,12 +1,15 @@
+using System.Text;
+
 namespace NoteManager.App.Services;
 
 /// <summary>
-/// Writes a small local audit trail for application startup and folder use.
+/// Writes a small local audit trail for application startup, folder use, and crashes.
 /// </summary>
 public sealed class ApplicationActivityLog
 {
     public const string LogFilePrefix = "Application-";
     public const int RetentionMonths = 12;
+    public const int MaxCrashTextLength = 32_768;
 
     private static readonly Lock WriteLock = new();
     private readonly string _logDirectory;
@@ -30,13 +33,32 @@ public sealed class ApplicationActivityLog
             "Repository folder opened from previous session",
             folder);
 
+    public bool TryWriteUnhandledException(string source, Exception exception)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(source);
+        ArgumentNullException.ThrowIfNull(exception);
+        return TryWrite(
+            $"Unhandled exception ({source}):{Environment.NewLine}{Truncate(exception.ToString())}",
+            flushToDisk: true);
+    }
+
+    public bool TryWriteUnhandledException(string source, object? exceptionObject)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(source);
+        return exceptionObject is Exception exception
+            ? TryWriteUnhandledException(source, exception)
+            : TryWrite(
+                $"Unhandled exception ({source}): {exceptionObject ?? "(null)"}",
+                flushToDisk: true);
+    }
+
     private bool TryWriteFolderActivity(string activity, string folder)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(folder);
         return TryWrite($"{activity}: {Path.GetFullPath(folder)}");
     }
 
-    private bool TryWrite(string message)
+    private bool TryWrite(string message, bool flushToDisk = false)
     {
         try
         {
@@ -47,9 +69,25 @@ public sealed class ApplicationActivityLog
                 var path = Path.Combine(
                     _logDirectory,
                     $"{LogFilePrefix}{DateTime.Today:yyyy-MM-dd}.log");
-                File.AppendAllText(
-                    path,
-                    $"{DateTimeOffset.Now:O} {message}{Environment.NewLine}");
+                var line = $"{DateTimeOffset.Now:O} {message}{Environment.NewLine}";
+                if (flushToDisk)
+                {
+                    using var stream = new FileStream(
+                        path,
+                        FileMode.Append,
+                        FileAccess.Write,
+                        FileShare.ReadWrite,
+                        bufferSize: 4096,
+                        FileOptions.WriteThrough);
+                    using var writer = new StreamWriter(stream, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+                    writer.Write(line);
+                    writer.Flush();
+                    stream.Flush(flushToDisk: true);
+                }
+                else
+                {
+                    File.AppendAllText(path, line);
+                }
             }
 
             return true;
@@ -64,6 +102,14 @@ public sealed class ApplicationActivityLog
             return false;
         }
     }
+
+    private static string Truncate(string text)
+        => text.Length <= MaxCrashTextLength
+            ? text
+            : string.Concat(
+                text.AsSpan(0, MaxCrashTextLength),
+                Environment.NewLine,
+                "… truncated.");
 
     private void DeleteExpiredLogs()
     {
