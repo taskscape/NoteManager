@@ -1,6 +1,7 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
+using Avalonia.Platform;
 using Avalonia.VisualTree;
 using NoteManager.App.Services;
 using System.Runtime.InteropServices;
@@ -45,6 +46,7 @@ public partial class PdfViewer : UserControl
     public PdfViewer()
     {
         InitializeComponent();
+        WebView.EnvironmentRequested += WebView_OnEnvironmentRequested;
         WebView.NavigationCompleted += WebView_OnNavigationCompleted;
         WebView.WebMessageReceived += WebView_OnWebMessageReceived;
     }
@@ -82,6 +84,7 @@ public partial class PdfViewer : UserControl
             exception is InvalidOperationException
             or NotSupportedException
             or COMException
+            or UnauthorizedAccessException
             or ArgumentException
             or UriFormatException)
         {
@@ -90,6 +93,34 @@ public partial class PdfViewer : UserControl
                 exception);
             StatusText.Text = $"The PDF could not be displayed: {exception.Message}";
         }
+    }
+
+    private void WebView_OnEnvironmentRequested(
+        object? sender,
+        WebViewEnvironmentRequestedEventArgs e)
+    {
+        if (e is not WindowsWebView2EnvironmentRequestedEventArgs webView2)
+        {
+            return;
+        }
+
+        var userDataFolder = ApplicationDataPaths.WebView2UserDataFolder;
+        try
+        {
+            Directory.CreateDirectory(userDataFolder);
+        }
+        catch (Exception exception) when (
+            exception is IOException
+            or UnauthorizedAccessException
+            or NotSupportedException)
+        {
+            new ApplicationActivityLog().TryWriteUnhandledException(
+                "PdfViewer.WebViewEnvironment",
+                exception);
+            StatusText.Text = $"The PDF could not be displayed: {exception.Message}";
+        }
+
+        webView2.UserDataFolder = userDataFolder;
     }
 
     private async void WebView_OnNavigationCompleted(

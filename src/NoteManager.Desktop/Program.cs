@@ -58,5 +58,8 @@ internal static class Program
     private static void OnDispatcherUnhandledException(
         object? sender,
         DispatcherUnhandledExceptionEventArgs e)
-        => ActivityLog.TryWriteUnhandledException("UI dispatcher", e.Exception);
+    {
+        ActivityLog.TryWriteUnhandledException("UI dispatcher", e.Exception);
+        e.Handled = UnhandledUiExceptionPolicy.ShouldKeepApplicationRunning(e.Exception);
+    }
 }
