@@ -111,11 +111,6 @@ for its user-visible scenarios and failure artifacts, and
 [`docs/testing.md`](docs/testing.md) for the category definitions, full tier
 matrix, required services, and focused commands.
 
-The former WPF/FlaUI suite remains under `tests/NoteManager.App.UiTests` only as
-migration reference. The adjacent `tests/Test-*.ps1` scripts that launch
-`NoteManager.App` belong to that legacy suite and are not current Avalonia test
-commands.
-
 ## Package a release for team sharing
 
 Run the release packager from the repository root on macOS. Supply a new
@@ -516,19 +511,11 @@ Following the [`taskscape/InfostackerPlugin`](https://github.com/taskscape/Infos
 
 The request is made only after the user presses the publish button. The note and combined attachments are checked against the plugin's 100 MB limit before upload. An unreadable attachment is skipped, matching the plugin behavior, while an unavailable service or rejected request is reported inside the Share panel.
 
-The legacy WPF automation reference includes a local mock-server publishing
-scenario, so no real note data is uploaded by that test. It is not part of the
-current Avalonia regression suite.
-
 ## Automatic note saving
 
 The Markdown editor updates the selected note model on every text change. A dirty note is written immediately before NoteManager changes the selected note, tag/view, or folder; it is also written before Infostacker publishing and during application shutdown.
 
 Saves use a write-through temporary file in the note's own directory followed by an overwrite move, preventing an interrupted write from truncating the original. If a save fails, the requested navigation or shutdown is cancelled and the current editor remains open with its unsaved text.
-
-The legacy WPF automation reference includes disposable-vault coverage for
-this boundary. Equivalent executable-level Avalonia coverage has not yet been
-added to the current UI suite.
 
 ## Markdown metadata and embedded media
 
@@ -553,11 +540,6 @@ blank line. Clearing every selection removes all existing tag blocks. New tag
 names may contain letters, numbers, dots, and dashes; spaces and other special
 characters are not permitted. Separate several new names with spaces, commas,
 or semicolons.
-
-The legacy WPF automation reference covers recent/all tag lists, lowercase
-display, validation, multi-tag entry, tag removal, immediate saving, and
-one-block merge. Equivalent executable-level Avalonia coverage has not yet
-been added to the current UI suite.
 
 An inline Obsidian PDF or image transclusion uses:
 
@@ -589,12 +571,9 @@ src/NoteManager.Desktop/
   Dialogs/                 cross-platform tag and confirmation dialogs
   MainWindow.axaml          Avalonia three-pane desktop interface
   Program.cs               Windows/macOS application entry point
-src/NoteManager.App/
-  Legacy WPF UI retained as migration reference; not in the portable solution
 tests/
   NoteManager.App.Tests/     portable parser, editor, index, PDF, and view-model tests
   NoteManager.Desktop.UiTests/ current Windows Avalonia search UI tests
-  NoteManager.App.UiTests/     legacy WPF FlaUI regression reference
 ```
 
 Visual comparison evidence and the final design review are documented in `design-qa.md`.

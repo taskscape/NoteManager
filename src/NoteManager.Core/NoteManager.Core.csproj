@@ -10,23 +10,4 @@
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.10" />
     <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.5" />
   </ItemGroup>
-
-  <ItemGroup>
-    <Compile Include="..\NoteManager.App\Infrastructure\ApplicationOptions.cs"
-             Link="Infrastructure\ApplicationOptions.cs" />
-    <Compile Include="..\NoteManager.App\Infrastructure\AsyncRelayCommand.cs"
-             Link="Infrastructure\AsyncRelayCommand.cs" />
-    <Compile Include="..\NoteManager.App\Infrastructure\ObservableObject.cs"
-             Link="Infrastructure\ObservableObject.cs" />
-    <Compile Include="..\NoteManager.App\Infrastructure\RangeObservableCollection.cs"
-             Link="Infrastructure\RangeObservableCollection.cs" />
-    <Compile Include="..\NoteManager.App\Infrastructure\RelayCommand.cs"
-             Link="Infrastructure\RelayCommand.cs" />
-    <Compile Include="..\NoteManager.App\Models\*.cs"
-             Link="Models\%(Filename)%(Extension)" />
-    <Compile Include="..\NoteManager.App\Services\*.cs"
-             Link="Services\%(Filename)%(Extension)" />
-    <Compile Include="..\NoteManager.App\ViewModels\MainViewModel.cs"
-             Link="ViewModels\MainViewModel.cs" />
-  </ItemGroup>
 </Project>

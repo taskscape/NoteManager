@@ -19,9 +19,7 @@ xUnit tests use `[Trait("Category", "...")]`; NUnit executable tests use
 test fixture. The former `UI` label has been replaced by `EndToEnd`.
 
 There are currently no browser or mobile test targets in this repository, so
-`Browser` and `Mobile` are not supported categories. The legacy WPF project at
-`tests/NoteManager.App.UiTests` remains migration reference and is not part of
-any supported execution tier.
+`Browser` and `Mobile` are not supported categories.
 
 ## Execution tiers
 
