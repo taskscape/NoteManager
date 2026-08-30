@@ -115,6 +115,7 @@ Filename: "{app}\{#AppExeName}"; Description: "Launch {#AppName}"; \
 [Code]
 var
   Doc2MdDownloadPage: TDownloadWizardPage;
+  Doc2MdInstallPage: TOutputMarqueeProgressWizardPage;
 
 { Keep the install directory aligned with the Document Conversion plugin contract. }
 function GetDoc2MdInstallDirectory(): String;
@@ -187,7 +188,7 @@ begin
   end;
 end;
 
-{ Create the prerequisite progress page used by interactive installations. }
+{ Create the prerequisite progress pages used by interactive installations. }
 procedure InitializeWizard;
 begin
   Doc2MdDownloadPage := CreateDownloadPage(
@@ -195,6 +196,12 @@ begin
     'Setup is downloading the Document Conversion dependency.',
     nil);
   Doc2MdDownloadPage.ShowBaseNameInsteadOfUrl := True;
+
+  { The silent install has no native progress, so surface an animated page to
+    keep the wizard responsive-looking instead of appearing frozen. }
+  Doc2MdInstallPage := CreateOutputMarqueeProgressPage(
+    'Installing DOC2MD',
+    'Setup is installing the Document Conversion dependency.');
 end;
 
 { Install DOC2MD before NoteManager files are copied and fail closed on errors. }
@@ -229,17 +236,26 @@ begin
     '/LOG=' + AddQuotes(SetupLogPath);
 
   Log('Installing DOC2MD silently at ' + GetDoc2MdInstallDirectory() + '.');
-  if not Exec(
-    InstallerPath,
-    InstallerParameters,
-    ExpandConstant('{tmp}'),
-    SW_HIDE,
-    ewWaitUntilTerminated,
-    ResultCode) then
-  begin
-    Result := Format(
-      'Unable to start the DOC2MD installer: %s', [SysErrorMessage(ResultCode)]);
-    Exit;
+  Doc2MdInstallPage.SetText(
+    'Installing the Document Conversion dependency.',
+    GetDoc2MdInstallDirectory());
+  Doc2MdInstallPage.Show;
+  Doc2MdInstallPage.Animate;
+  try
+    if not Exec(
+      InstallerPath,
+      InstallerParameters,
+      ExpandConstant('{tmp}'),
+      SW_HIDE,
+      ewWaitUntilTerminated,
+      ResultCode) then
+    begin
+      Result := Format(
+        'Unable to start the DOC2MD installer: %s', [SysErrorMessage(ResultCode)]);
+      Exit;
+    end;
+  finally
+    Doc2MdInstallPage.Hide;
   end;
 
   if ResultCode = 3010 then
