@@ -100,12 +100,16 @@ public static class MarkdownFolderService
             CreatedAt = file.CreationTimeUtc,
             UpdatedAt = file.LastWriteTimeUtc,
             SizeBytes = file.Length,
+            // The note summary now accounts for inferred sibling documents as
+            // well as authored embeds, avoiding an "embedded image" label for a
+            // non-previewable DOCX or other related file.
             AttachmentDescription = mediaReferences.Length switch
             {
                 0 => "Markdown note",
                 1 when mediaReferences[0].Kind == EmbeddedMediaKind.Pdf => "1 embedded PDF",
-                1 => "1 embedded image",
-                _ => $"{mediaReferences.Length:N0} embedded attachments"
+                1 when mediaReferences[0].Kind == EmbeddedMediaKind.Image => "1 embedded image",
+                1 => "1 related document",
+                _ => $"{mediaReferences.Length:N0} attachments"
             },
             ModifiedAt = modified.ToString("dd.MM.yyyy HH:mm"),
             GeneratedFilePath = file.FullName,

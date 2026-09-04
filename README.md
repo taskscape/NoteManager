@@ -552,6 +552,15 @@ An inline Obsidian PDF or image transclusion uses:
 
 Multiple PDF and PNG, JPG, JPEG, or BMP transclusions are supported in one note and appear beneath the editor in Markdown order. Targets may be absolute, relative to the note, relative to the vault root, or filename-only; filename-only links are resolved against the vault media index. Changes typed into the editor refresh the previews shortly after typing stops.
 
+NoteManager also discovers corresponding documents beside each Markdown note.
+For `note.md`, both `note.<extension>` and `note.md.<extension>` are treated as
+related, so `note.pdf`, `note.md.pdf`, `note.docx`, and `note.md.xlsx` appear
+automatically below the editor. Matching is case-insensitive, requires an exact
+basename in the same folder, and excludes other Markdown notes. Related PDFs
+use the inline PDF viewer; every other related format is shown as an attachment
+card that opens in its operating-system-associated application. Explicitly
+embedded files remain first, and a corresponding file is not shown twice.
+
 ## Sample documents
 
 When no vault is open, the visual-demo mode creates valid lightweight PDF and

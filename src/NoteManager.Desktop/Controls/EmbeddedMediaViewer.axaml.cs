@@ -43,6 +43,12 @@ public partial class EmbeddedMediaViewer : UserControl
             {
                 ImagePath = media.ResolvedPath
             },
+            // Unsupported related-document formats still receive a visible,
+            // openable attachment card instead of silently disappearing.
+            { Kind: EmbeddedMediaKind.Document } => new DocumentAttachmentViewer
+            {
+                DocumentPath = media.ResolvedPath
+            },
             _ => null
         };
     }

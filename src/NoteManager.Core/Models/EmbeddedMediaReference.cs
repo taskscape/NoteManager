@@ -3,7 +3,13 @@ namespace NoteManager.App.Models;
 public enum EmbeddedMediaKind
 {
     Pdf,
-    Image
+    Image,
+
+    /// <summary>
+    /// Represents a related file that must be shown as an attachment because
+    /// NoteManager does not render its contents inline.
+    /// </summary>
+    Document
 }
 
 public sealed record EmbeddedMediaReference(
@@ -11,6 +17,10 @@ public sealed record EmbeddedMediaReference(
     string ResolvedPath,
     EmbeddedMediaKind Kind)
 {
+    /// <summary>
+    /// Provides the sibling file name for both inline media and automatically
+    /// discovered related-document attachment cards.
+    /// </summary>
     public string FileName => Path.GetFileName(ResolvedPath);
 
     public static bool TryGetKind(string path, out EmbeddedMediaKind kind)

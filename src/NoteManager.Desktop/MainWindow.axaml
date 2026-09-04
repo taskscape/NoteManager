@@ -459,6 +459,8 @@
                 </ItemsControl>
               </StackPanel>
 
+              <!-- The shared attachment stream preserves explicit media order,
+                   then appends inferred sibling PDFs and document cards. -->
               <ItemsControl ItemsSource="{Binding SelectedNote.EmbeddedMediaReferences}">
                 <ItemsControl.ItemTemplate>
                   <DataTemplate>
