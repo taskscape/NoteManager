@@ -67,19 +67,28 @@ public partial class ShareDialog : Window
         }
     }
 
+    private void CancelPublishing_OnClick(object? sender, RoutedEventArgs e)
+    {
+        // Cancel before dismissing so a stalled HTTP body cannot keep this modal visible.
+        ViewModel.CancelPublishing();
+        Close();
+    }
+
     private void ShareDialog_OnClosing(object? sender, WindowClosingEventArgs e)
     {
         if (ViewModel.IsPublishing)
         {
-            e.Cancel = true;
+            // Window controls, Alt+F4, and Escape must share the explicit Cancel action's safe exit behavior.
+            ViewModel.CancelPublishing();
         }
     }
 
     private void ShareDialog_OnKeyDown(object? sender, KeyEventArgs e)
     {
-        if (e.Key == Key.Escape && !ViewModel.IsPublishing)
+        if (e.Key == Key.Escape)
         {
             e.Handled = true;
+            // Escape closes the dialog during publishing; its Closing handler cancels the active operation first.
             Close();
         }
     }

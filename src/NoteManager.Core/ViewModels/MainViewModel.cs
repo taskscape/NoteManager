@@ -1173,8 +1173,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
 
         CancelPublishing();
-        _publishCancellation = new CancellationTokenSource();
-        var cancellationToken = _publishCancellation.Token;
+        var publishingCancellation = new CancellationTokenSource();
+        _publishCancellation = publishingCancellation;
+        var cancellationToken = publishingCancellation.Token;
         var folderPath = CurrentFolderPath;
 
         IsPublishing = true;
@@ -1204,8 +1205,13 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         finally
         {
             IsPublishing = false;
-            _publishCancellation?.Dispose();
-            _publishCancellation = null;
+            if (ReferenceEquals(_publishCancellation, publishingCancellation))
+            {
+                _publishCancellation = null;
+            }
+
+            // The active operation owns disposal so a dialog cancel cannot dispose a token still being observed by HttpClient.
+            publishingCancellation.Dispose();
         }
     }
 
@@ -1824,11 +1830,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
     }
 
-    private void CancelPublishing()
+    public void CancelPublishing()
     {
+        // Dialog close and the explicit Cancel action both interrupt the active request without waiting for its response body.
         _publishCancellation?.Cancel();
-        _publishCancellation?.Dispose();
-        _publishCancellation = null;
     }
 
     private void ChangeView(string status)

@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
@@ -30,6 +31,10 @@ public sealed record PublicationAttachment(
 public sealed partial class InfostackerPublishingService
 {
     private const long MaximumUploadBytes = 100L * 1024 * 1024;
+    // Publishing only needs a small JSON identifier, so reject oversized bodies before parsing untrusted data.
+    private const int MaximumResponseBodyBytes = 1024 * 1024;
+    // The deadline covers the upload, headers, response body, and parsing rather than relying on HttpClient headers behavior.
+    private static readonly TimeSpan DefaultPublishingTimeout = TimeSpan.FromMinutes(2);
     private static readonly Uri ProductionBaseUri = new("https://shr.infostacker.com/");
     private static readonly HttpClient SharedHttpClient = new()
     {
@@ -38,13 +43,22 @@ public sealed partial class InfostackerPublishingService
 
     private readonly HttpClient _httpClient;
     private readonly Uri _baseUri;
+    private readonly TimeSpan _publishingTimeout;
 
     public InfostackerPublishingService(
         HttpClient? httpClient = null,
-        Uri? baseUri = null)
+        Uri? baseUri = null,
+        TimeSpan? publishingTimeout = null)
     {
         _httpClient = httpClient ?? SharedHttpClient;
         _baseUri = EnsureTrailingSlash(baseUri ?? ProductionBaseUri);
+        _publishingTimeout = publishingTimeout ?? DefaultPublishingTimeout;
+        if (_publishingTimeout <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(publishingTimeout),
+                "The publishing timeout must be greater than zero.");
+        }
     }
 
     public async Task<string> PublishAsync(
@@ -65,10 +79,17 @@ public sealed partial class InfostackerPublishingService
                 "Only a Markdown note inside the current folder can be published.");
         }
 
+        // Link caller cancellation with an operation-wide deadline so a stalled response body cannot outlive the dialog.
+        using var deadlineCancellation = new CancellationTokenSource(_publishingTimeout);
+        using var operationCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken,
+            deadlineCancellation.Token);
+        var operationToken = operationCancellation.Token;
+
         try
         {
             var source = await File
-                .ReadAllTextAsync(notePath, cancellationToken)
+                .ReadAllTextAsync(notePath, operationToken)
                 .ConfigureAwait(false);
             var publication = PreparePublication(notePath, rootPath, source);
             EnsureReferencedPdfsAreAvailable(publication.Attachments);
@@ -94,7 +115,7 @@ public sealed partial class InfostackerPublishingService
 
             foreach (var attachment in attachments)
             {
-                cancellationToken.ThrowIfCancellationRequested();
+                operationToken.ThrowIfCancellationRequested();
                 try
                 {
                     var stream = new FileStream(
@@ -136,7 +157,7 @@ public sealed partial class InfostackerPublishingService
             using var response = await _httpClient.SendAsync(
                 request,
                 HttpCompletionOption.ResponseHeadersRead,
-                cancellationToken).ConfigureAwait(false);
+                operationToken).ConfigureAwait(false);
             if (response.StatusCode == HttpStatusCode.RequestEntityTooLarge)
             {
                 throw new InfostackerPublishingException(
@@ -151,11 +172,15 @@ public sealed partial class InfostackerPublishingService
 
             await using var responseStream =
                 await response.Content
-                    .ReadAsStreamAsync(cancellationToken)
+                    .ReadAsStreamAsync(operationToken)
                     .ConfigureAwait(false);
+            var responseBytes = await ReadResponseBodyAsync(response, responseStream, operationToken)
+                .ConfigureAwait(false);
+            // Parsing receives the same operation token after the bounded read keeps synchronous parser work small.
+            await using var responseBodyStream = new MemoryStream(responseBytes, writable: false);
             using var document = await JsonDocument.ParseAsync(
-                responseStream,
-                cancellationToken: cancellationToken).ConfigureAwait(false);
+                responseBodyStream,
+                cancellationToken: operationToken).ConfigureAwait(false);
             // The sharing protocol requires an object response; JsonElement property access throws for valid scalar JSON.
             if (document.RootElement.ValueKind != JsonValueKind.Object
                 || !document.RootElement.TryGetProperty("id", out var idElement)
@@ -173,6 +198,14 @@ public sealed partial class InfostackerPublishingService
         {
             throw;
         }
+        catch (OperationCanceledException exception) when (
+            !cancellationToken.IsCancellationRequested)
+        {
+            // A deadline or HttpClient timeout is a recoverable network failure, unlike an explicit user cancellation.
+            throw new InfostackerPublishingException(
+                "Publishing timed out before Infostacker returned a complete response.",
+                exception);
+        }
         catch (OperationCanceledException)
         {
             throw;
@@ -187,6 +220,50 @@ public sealed partial class InfostackerPublishingService
             throw new InfostackerPublishingException(
                 "Failed to publish the note to Infostacker.",
                 exception);
+        }
+    }
+
+    private static async Task<byte[]> ReadResponseBodyAsync(
+        HttpResponseMessage response,
+        Stream responseStream,
+        CancellationToken cancellationToken)
+    {
+        if (response.Content.Headers.ContentLength is > MaximumResponseBodyBytes)
+        {
+            throw new InfostackerPublishingException(
+                "Infostacker returned a publishing response that exceeds the 1 MB limit.");
+        }
+
+        using var body = new MemoryStream();
+        var buffer = ArrayPool<byte>.Shared.Rent(81920);
+        try
+        {
+            while (true)
+            {
+                var bytesRead = await responseStream
+                    .ReadAsync(buffer.AsMemory(0, buffer.Length), cancellationToken)
+                    .ConfigureAwait(false);
+                if (bytesRead == 0)
+                {
+                    return body.ToArray();
+                }
+
+                if (body.Length + bytesRead > MaximumResponseBodyBytes)
+                {
+                    // Count bytes while reading because a peer can omit or lie about Content-Length.
+                    throw new InfostackerPublishingException(
+                        "Infostacker returned a publishing response that exceeds the 1 MB limit.");
+                }
+
+                await body.WriteAsync(
+                        buffer.AsMemory(0, bytesRead),
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
         }
     }
 

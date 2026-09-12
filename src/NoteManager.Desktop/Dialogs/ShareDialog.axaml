@@ -82,6 +82,12 @@
                 Click="Close_OnClick"
                 Content="Close"
                 IsEnabled="{Binding IsPublishing, Converter={StaticResource NotBool}}" />
+        <!-- Keep a visible escape route while publication is active instead of trapping the modal behind a disabled Close button. -->
+        <Button x:Name="CancelPublishingButton"
+                Classes="command"
+                Click="CancelPublishing_OnClick"
+                Content="Cancel"
+                IsVisible="{Binding IsPublishing}" />
         <Button x:Name="PublishPublicLinkButton"
                 Classes="primary"
                 Click="Publish_OnClick"

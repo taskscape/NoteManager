@@ -137,6 +137,44 @@ public sealed class InfostackerPublishingServiceTests
     }
 
     [Fact]
+    public async Task PublishAsync_StalledResponseBody_TimesOutAfterHeaders()
+    {
+        using var vault = new TestVault();
+        var notePath = vault.Write("Report.md", "# Draft");
+        var handler = new StallingResponseHandler();
+        using var client = new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
+        var service = new InfostackerPublishingService(
+            client,
+            new Uri("https://example.test/"),
+            TimeSpan.FromMilliseconds(50));
+
+        // Headers are already available, so only the service-wide deadline can release this blocked body read.
+        var exception = await Assert.ThrowsAsync<InfostackerPublishingException>(
+            () => service.PublishAsync(CreateNote(notePath), vault.Path)
+                .WaitAsync(TimeSpan.FromSeconds(2)));
+
+        Assert.Contains("timed out", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(1, handler.RequestCount);
+    }
+
+    [Fact]
+    public async Task PublishAsync_GrowingResponseBody_RejectsBodyLargerThanLimit()
+    {
+        using var vault = new TestVault();
+        var notePath = vault.Write("Report.md", "# Draft");
+        var handler = new GrowingResponseHandler();
+        using var client = new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
+        var service = new InfostackerPublishingService(client, new Uri("https://example.test/"));
+
+        // The stream never ends and omits Content-Length, so byte counting must enforce the response limit.
+        var exception = await Assert.ThrowsAsync<InfostackerPublishingException>(
+            () => service.PublishAsync(CreateNote(notePath), vault.Path)
+                .WaitAsync(TimeSpan.FromSeconds(2)));
+
+        Assert.Contains("exceeds the 1 MB limit", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task PublishSelectedNoteAsync_InvalidPublishingResponse_IsHandledAndRetainsEditorContent()
     {
         using var vault = new TestVault();
@@ -166,6 +204,60 @@ public sealed class InfostackerPublishingServiceTests
         var logContents = File.ReadAllText(logPath);
         Assert.Contains("Operation failed (Publishing a public link):", logContents);
         Assert.Contains(nameof(InfostackerPublishingException), logContents);
+    }
+
+    [Fact]
+    public async Task PublishSelectedNoteAsync_StalledResponseBody_TimesOutAndRetainsEditorContent()
+    {
+        using var vault = new TestVault();
+        var notePath = vault.Write("Report.md", "# Initial draft");
+        var handler = new StallingResponseHandler();
+        using var client = new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
+        var publishingService = new InfostackerPublishingService(
+            client,
+            new Uri("https://example.test/"),
+            TimeSpan.FromMilliseconds(50));
+        using var viewModel = new MainViewModel(publishingService, new ApplicationActivityLog(vault.Path));
+        await viewModel.LoadMarkdownFolderAsync(vault.Path, notePath);
+        await WaitForIndexAsync(viewModel);
+        const string expectedContent = "# Updated draft\n\nContent that must remain available.";
+        viewModel.SelectedNote!.PlainTextContent = expectedContent;
+
+        // A bounded completion restores IsPublishing so the dialog can be closed without losing the editor draft.
+        var publicUrl = await viewModel.PublishSelectedNoteAsync()
+            .WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.Null(publicUrl);
+        Assert.False(viewModel.IsPublishing);
+        Assert.Equal(expectedContent, viewModel.SelectedNote.PlainTextContent);
+        Assert.Equal(expectedContent, File.ReadAllText(notePath));
+        Assert.Contains("timed out", viewModel.ShareStatusText, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task PublishSelectedNoteAsync_UserCancellation_IsNotReportedAsATimeout()
+    {
+        using var vault = new TestVault();
+        var notePath = vault.Write("Report.md", "# Draft");
+        var handler = new StallingResponseHandler();
+        using var client = new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
+        var publishingService = new InfostackerPublishingService(
+            client,
+            new Uri("https://example.test/"),
+            TimeSpan.FromSeconds(10));
+        using var viewModel = new MainViewModel(publishingService, new ApplicationActivityLog(vault.Path));
+        await viewModel.LoadMarkdownFolderAsync(vault.Path, notePath);
+        await WaitForIndexAsync(viewModel);
+
+        var publishTask = viewModel.PublishSelectedNoteAsync();
+        await handler.WaitForRequestAsync();
+        // The dialog's Cancel action calls this method, so explicit cancellation must retain its distinct status.
+        viewModel.CancelPublishing();
+        var publicUrl = await publishTask.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.Null(publicUrl);
+        Assert.False(viewModel.IsPublishing);
+        Assert.Equal("Publishing cancelled.", viewModel.ShareStatusText);
     }
 
     private static NoteItem CreateNote(string path) => new()
@@ -219,6 +311,107 @@ public sealed class InfostackerPublishingServiceTests
                 // A configurable response body makes protocol-shape regressions testable without a live service.
                 Content = new StringContent(responseBody, Encoding.UTF8, "application/json")
             };
+        }
+    }
+
+    private sealed class StallingResponseHandler : HttpMessageHandler
+    {
+        private readonly TaskCompletionSource _requestStarted = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public int RequestCount { get; private set; }
+
+        public Task WaitForRequestAsync() => _requestStarted.Task;
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            RequestCount++;
+            // Return successful headers immediately while the stream waits for the service's linked cancellation token.
+            _requestStarted.TrySetResult();
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StreamContent(new StallingStream())
+            });
+        }
+    }
+
+    private sealed class GrowingResponseHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            // No Content-Length models a peer that keeps appending data after valid response headers.
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StreamContent(new GrowingStream())
+            });
+        }
+    }
+
+    private sealed class StallingStream : Stream
+    {
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override void Flush() { }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+        public override Task<int> ReadAsync(
+            byte[] buffer,
+            int offset,
+            int count,
+            CancellationToken cancellationToken) => WaitForCancellationAsync(cancellationToken).AsTask();
+
+        public override ValueTask<int> ReadAsync(
+            Memory<byte> buffer,
+            CancellationToken cancellationToken = default) => WaitForCancellationAsync(cancellationToken);
+
+        private static async ValueTask<int> WaitForCancellationAsync(CancellationToken cancellationToken)
+        {
+            // The artificial body produces no bytes and completes only when the linked operation deadline cancels it.
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return 0;
+        }
+    }
+
+    private sealed class GrowingStream : Stream
+    {
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+
+        public override int Read(byte[] buffer, int offset, int count) => WriteChunk(buffer.AsSpan(offset, count));
+        public override void Flush() { }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+        public override Task<int> ReadAsync(
+            byte[] buffer,
+            int offset,
+            int count,
+            CancellationToken cancellationToken) => Task.FromResult(WriteChunk(buffer.AsSpan(offset, count)));
+
+        public override ValueTask<int> ReadAsync(
+            Memory<byte> buffer,
+            CancellationToken cancellationToken = default) => ValueTask.FromResult(WriteChunk(buffer.Span));
+
+        private static int WriteChunk(Span<byte> buffer)
+        {
+            // Repeated non-JSON bytes model an indefinitely growing response without predeclaring its size.
+            buffer.Fill((byte)'x');
+            return buffer.Length;
         }
     }
 
