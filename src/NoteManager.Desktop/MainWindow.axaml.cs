@@ -409,8 +409,9 @@ public partial class MainWindow : Window
 
     private async void Tags_OnClick(object? sender, RoutedEventArgs e)
     {
+        var target = ViewModel.CreateSelectedNoteOperationTarget();
         var context = ViewModel.CreateTagAssignmentContext();
-        if (context is null)
+        if (target is null || context is null)
         {
             ViewModel.StatusText = "Select a Markdown note before assigning tags";
             return;
@@ -419,7 +420,8 @@ public partial class MainWindow : Window
         var dialog = new AssignTagsDialog(context);
         if (await dialog.ShowDialog<bool>(this))
         {
-            ViewModel.ApplyTagsToSelectedNote(dialog.SelectedTags);
+            // Use the target shown in the dialog so a background refresh cannot tag a new selection.
+            ViewModel.ApplyTagsToNote(target, dialog.SelectedTags);
         }
     }
 
@@ -432,7 +434,8 @@ public partial class MainWindow : Window
     private async void Delete_OnClick(object? sender, RoutedEventArgs e)
     {
         var note = ViewModel.SelectedNote;
-        if (note is null || !ViewModel.CanDeleteSelectedNote)
+        var target = ViewModel.CreateSelectedNoteOperationTarget();
+        if (note is null || target is null || !ViewModel.CanDeleteSelectedNote)
         {
             ViewModel.StatusText = "Select a Markdown note before deleting";
             return;
@@ -444,7 +447,8 @@ public partial class MainWindow : Window
             + "This removes the Markdown file from disk and cannot be undone.");
         if (await dialog.ShowDialog<bool>(this))
         {
-            await ViewModel.DeleteSelectedNoteAsync();
+            // Delete only the note named by this confirmation, even if selection changed during the modal dialog.
+            await ViewModel.DeleteNoteAsync(target);
         }
     }
 

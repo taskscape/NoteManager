@@ -6,7 +6,7 @@ using Xunit;
 namespace NoteManager.App.Tests;
 
 /// <summary>
-/// Verifies that deletion owns its draft across worker/UI scheduling gaps.
+/// Verifies that destructive modal actions keep their captured note target across worker/UI scheduling gaps.
 /// </summary>
 public sealed class NoteDeletionConcurrencyTests
 {
@@ -67,6 +67,121 @@ public sealed class NoteDeletionConcurrencyTests
         Assert.Equal("unsaved draft", note.PlainTextContent);
         Assert.True(note.IsDirty);
         // The initial folder load also owns an asynchronous index writer.
+        await WaitForIndexAsync(viewModel);
+    }
+
+    [Fact]
+    public async Task DeleteNoteAsync_WhenSelectionChangesAfterConfirmation_DeletesTheConfirmedNote()
+    {
+        using var folder = new TemporaryNoteFolder();
+        var confirmedPath = folder.WriteNote("alpha.md", "confirmed note");
+        var laterSelectionPath = folder.WriteNote("beta.md", "later selection");
+        using var viewModel = new MainViewModel();
+        await viewModel.LoadMarkdownFolderAsync(folder.Path, confirmedPath);
+        var target = Assert.IsType<MainViewModel.NoteOperationTarget>(
+            viewModel.CreateSelectedNoteOperationTarget());
+        var laterSelection = Assert.Single(viewModel.NotesView, note =>
+            note.SourceFilePath.Equals(laterSelectionPath, StringComparison.OrdinalIgnoreCase));
+
+        // This simulates changing selection while a confirmation dialog is still open.
+        viewModel.SelectedNote = laterSelection;
+
+        Assert.True(await viewModel.DeleteNoteAsync(target));
+        Assert.False(File.Exists(confirmedPath));
+        Assert.True(File.Exists(laterSelectionPath));
+        Assert.Same(laterSelection, viewModel.SelectedNote);
+        await WaitForIndexAsync(viewModel);
+    }
+
+    [Fact]
+    public async Task DeleteNoteAsync_WhenConfirmedNoteIsRemovedAndVaultRefreshes_DoesNotDeleteFallbackSelection()
+    {
+        using var folder = new TemporaryNoteFolder();
+        var confirmedPath = folder.WriteNote("alpha.md", "confirmed note");
+        var fallbackPath = folder.WriteNote("beta.md", "fallback note");
+        using var viewModel = new MainViewModel();
+        await viewModel.LoadMarkdownFolderAsync(folder.Path, confirmedPath);
+        var target = Assert.IsType<MainViewModel.NoteOperationTarget>(
+            viewModel.CreateSelectedNoteOperationTarget());
+
+        // An external deletion followed by a scheduled refresh makes beta the current fallback selection.
+        File.Delete(confirmedPath);
+        await viewModel.RefreshMarkdownFolderAsync();
+        var fallbackNote = Assert.IsType<NoteItem>(viewModel.SelectedNote);
+        Assert.Equal(fallbackPath, fallbackNote.SourceFilePath, ignoreCase: true);
+
+        Assert.False(await viewModel.DeleteNoteAsync(target));
+        Assert.True(File.Exists(fallbackPath));
+        Assert.Contains("no longer exists", viewModel.StatusText, StringComparison.OrdinalIgnoreCase);
+        await WaitForIndexAsync(viewModel);
+    }
+
+    [Fact]
+    public async Task DeleteNoteAsync_WhenVaultChangesAfterConfirmation_DoesNotDeleteFromEitherVault()
+    {
+        using var originalFolder = new TemporaryNoteFolder();
+        using var laterFolder = new TemporaryNoteFolder();
+        var confirmedPath = originalFolder.WriteNote("alpha.md", "confirmed note");
+        var laterVaultPath = laterFolder.WriteNote("beta.md", "later vault note");
+        using var viewModel = new MainViewModel();
+        await viewModel.LoadMarkdownFolderAsync(originalFolder.Path, confirmedPath);
+        var target = Assert.IsType<MainViewModel.NoteOperationTarget>(
+            viewModel.CreateSelectedNoteOperationTarget());
+
+        // Opening a different vault while the dialog is open must invalidate the original authorization.
+        await viewModel.LoadMarkdownFolderAsync(laterFolder.Path, laterVaultPath);
+
+        Assert.False(await viewModel.DeleteNoteAsync(target));
+        Assert.True(File.Exists(confirmedPath));
+        Assert.True(File.Exists(laterVaultPath));
+        Assert.Contains("notes folder changed", viewModel.StatusText, StringComparison.OrdinalIgnoreCase);
+        await WaitForIndexAsync(viewModel);
+    }
+
+    [Fact]
+    public async Task ApplyTagsToNote_WhenSelectionChangesAfterDialog_UpdatesTheCapturedNote()
+    {
+        using var folder = new TemporaryNoteFolder();
+        var confirmedPath = folder.WriteNote("alpha.md", "confirmed note");
+        var laterSelectionPath = folder.WriteNote("beta.md", "later selection");
+        using var viewModel = new MainViewModel();
+        await viewModel.LoadMarkdownFolderAsync(folder.Path, confirmedPath);
+        var target = Assert.IsType<MainViewModel.NoteOperationTarget>(
+            viewModel.CreateSelectedNoteOperationTarget());
+        var laterSelection = Assert.Single(viewModel.NotesView, note =>
+            note.SourceFilePath.Equals(laterSelectionPath, StringComparison.OrdinalIgnoreCase));
+
+        // The captured target must survive a selection change while the tags dialog awaits its result.
+        viewModel.SelectedNote = laterSelection;
+
+        Assert.True(viewModel.ApplyTagsToNote(target, ["captured-tag"]));
+        Assert.Contains("captured-tag", File.ReadAllText(confirmedPath));
+        Assert.DoesNotContain("captured-tag", File.ReadAllText(laterSelectionPath));
+        Assert.Same(laterSelection, viewModel.SelectedNote);
+        await WaitForIndexAsync(viewModel);
+    }
+
+    [Fact]
+    public async Task ApplyTagsToNote_WhenConfirmedNoteIsRenamedAndVaultRefreshes_DoesNotMutateFallbackSelection()
+    {
+        using var folder = new TemporaryNoteFolder();
+        var confirmedPath = folder.WriteNote("alpha.md", "confirmed note");
+        var renamedPath = Path.Combine(folder.Path, "renamed.md");
+        var fallbackPath = folder.WriteNote("beta.md", "fallback note");
+        using var viewModel = new MainViewModel();
+        await viewModel.LoadMarkdownFolderAsync(folder.Path, confirmedPath);
+        var target = Assert.IsType<MainViewModel.NoteOperationTarget>(
+            viewModel.CreateSelectedNoteOperationTarget());
+
+        // A rename changes the captured path, and refresh replaces the old note object with the new vault contents.
+        File.Move(confirmedPath, renamedPath);
+        await viewModel.RefreshMarkdownFolderAsync();
+        Assert.Equal(fallbackPath, viewModel.SelectedNote!.SourceFilePath, ignoreCase: true);
+
+        Assert.False(viewModel.ApplyTagsToNote(target, ["captured-tag"]));
+        Assert.DoesNotContain("captured-tag", File.ReadAllText(fallbackPath));
+        Assert.DoesNotContain("captured-tag", File.ReadAllText(renamedPath));
+        Assert.Contains("no longer exists", viewModel.StatusText, StringComparison.OrdinalIgnoreCase);
         await WaitForIndexAsync(viewModel);
     }
 

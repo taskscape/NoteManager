@@ -487,11 +487,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
            && Directory.Exists(CurrentFolderPath);
 
     public bool CanDeleteSelectedNote
-        => CanCreateNote
-           && SelectedNote is not null
-           // Keep the authorized deletion exclusive to its original note until the worker completes.
-           && !IsNoteDeleting(SelectedNote)
-           && IsMarkdownPathInCurrentFolder(SelectedNote.SourceFilePath);
+        => SelectedNote is { } note && CanDeleteNote(note);
 
     // Content writes require a verified disk revision; metadata selection alone is insufficient.
     public bool CanEditSelectedNote
@@ -504,10 +500,20 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         => CanEditSelectedNote && !IsPublishing;
 
     public bool CanAssignTags
-        => CanEditSelectedNote;
+        => SelectedNote is { } note && CanAssignTagsTo(note);
 
     public bool CanRetryLoadSelectedNote
         => SelectedNote is { IsMarkdownFile: true, IsContentUnavailable: true };
+
+    // Target-specific eligibility keeps modal operations independent from a later UI selection.
+    private bool CanDeleteNote(NoteItem note)
+        => CanCreateNote
+           && !IsNoteDeleting(note)
+           && IsMarkdownPathInCurrentFolder(note.SourceFilePath);
+
+    // Tag assignment writes Markdown, so its captured target must also be loaded and editable.
+    private bool CanAssignTagsTo(NoteItem note)
+        => CanDeleteNote(note) && note.IsContentLoaded;
 
     /// <summary>
     /// Attempts a fresh disk read after a recoverable load failure without
@@ -524,22 +530,60 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         return TryLoadMarkdownContent(note);
     }
 
+    /// <summary>
+    /// Captures a note path and vault path before a modal action starts, so a
+    /// later selection change cannot redirect that action to another note.
+    /// </summary>
+    public NoteOperationTarget? CreateSelectedNoteOperationTarget()
+    {
+        var note = SelectedNote;
+        return note is null || !IsFolderMode || string.IsNullOrWhiteSpace(CurrentFolderPath)
+            ? null
+            : new NoteOperationTarget(
+                Path.GetFullPath(note.SourceFilePath),
+                Path.GetFullPath(CurrentFolderPath));
+    }
+
     public TagAssignmentContext? CreateTagAssignmentContext()
     {
         var note = SelectedNote;
-        return note is null || !CanAssignTags
+        return note is null || !CanAssignTagsTo(note)
             ? null
             : TagAssignmentService.CreateContext(_allNotes, note);
     }
 
     public bool ApplyTagsToSelectedNote(IEnumerable<string> selectedTags)
     {
-        ArgumentNullException.ThrowIfNull(selectedTags);
-
-        var note = SelectedNote;
-        if (note is null || !CanAssignTags)
+        var target = CreateSelectedNoteOperationTarget();
+        if (target is null)
         {
             SetStatus("Select a Markdown note from the current folder before assigning tags");
+            return false;
+        }
+
+        return ApplyTagsToNote(target, selectedTags);
+    }
+
+    /// <summary>
+    /// Applies modal tag choices only to the note and vault that were captured
+    /// when the dialog opened, never to a selection that changed while it was open.
+    /// </summary>
+    public bool ApplyTagsToNote(
+        NoteOperationTarget target,
+        IEnumerable<string> selectedTags)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+        ArgumentNullException.ThrowIfNull(selectedTags);
+
+        if (!TryResolveCurrentNoteTarget(target, "Tag assignment", out var note))
+        {
+            return false;
+        }
+
+        if (!CanAssignTagsTo(note))
+        {
+            // A refresh may retain the path but leave the replacement note unavailable for editing.
+            SetStatus($"Tag assignment cancelled because {note.FileName} is no longer available for editing.");
             return false;
         }
 
@@ -551,7 +595,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
         note.PlainTextContent = updatedMarkdown;
         note.ReplaceTags(normalizedTags);
-        if (!TrySaveSelectedNote())
+        if (!TrySaveNote(note, updateSearchIndex: true, allowConflictOverwrite: false))
         {
             return false;
         }
@@ -741,14 +785,37 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     public async Task<bool> DeleteSelectedNoteAsync()
     {
-        var note = SelectedNote;
-        if (note is null || !CanDeleteSelectedNote)
+        var target = CreateSelectedNoteOperationTarget();
+        if (target is null)
         {
             SetStatus("Select a Markdown note from the current folder before deleting");
             return false;
         }
 
-        var folderPath = CurrentFolderPath;
+        return await DeleteNoteAsync(target);
+    }
+
+    /// <summary>
+    /// Deletes only the note and vault captured before confirmation; a refresh,
+    /// rename, external deletion, or vault change cancels instead of using a new selection.
+    /// </summary>
+    public async Task<bool> DeleteNoteAsync(NoteOperationTarget target)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+
+        if (!TryResolveCurrentNoteTarget(target, "Deletion", out var note))
+        {
+            return false;
+        }
+
+        if (!CanDeleteNote(note))
+        {
+            // Recheck command eligibility for the resolved target rather than the note currently selected in the UI.
+            SetStatus($"Deletion cancelled because {note.FileName} is no longer available in the current folder.");
+            return false;
+        }
+
+        var folderPath = target.VaultPath;
         var filePath = Path.GetFullPath(note.SourceFilePath);
         var fileName = Path.GetFileName(filePath);
         var operation = new NoteDeletionOperation(note, folderPath);
@@ -787,6 +854,37 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             _deletingNotes.Remove(note);
             RefreshFileCommandState();
         }
+    }
+
+    /// <summary>
+    /// Revalidates a modal action's immutable note and vault identity after the
+    /// dialog closes, before an operation can modify a file or editor state.
+    /// </summary>
+    private bool TryResolveCurrentNoteTarget(
+        NoteOperationTarget target,
+        string operationName,
+        out NoteItem note)
+    {
+        note = null!;
+        if (!IsFolderMode
+            || string.IsNullOrWhiteSpace(CurrentFolderPath)
+            || !CurrentFolderPath.Equals(target.VaultPath, StringComparison.OrdinalIgnoreCase))
+        {
+            SetStatus($"{operationName} cancelled because the notes folder changed while the dialog was open.");
+            return false;
+        }
+
+        note = _allNotes.FirstOrDefault(candidate => candidate.SourceFilePath.Equals(
+            target.SourceFilePath,
+            StringComparison.OrdinalIgnoreCase))!;
+        if (note is null || !File.Exists(note.SourceFilePath))
+        {
+            // A refresh may replace NoteItem instances, so path identity—not the stale object reference—proves the target remains.
+            SetStatus($"{operationName} cancelled because {Path.GetFileName(target.SourceFilePath)} no longer exists in this folder.");
+            return false;
+        }
+
+        return true;
     }
 
     /// <summary>
@@ -832,6 +930,13 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private sealed record NoteDeletionOperation(
         NoteItem Note,
         string FolderPath);
+
+    /// <summary>
+    /// Identifies the exact Markdown file and vault approved by a modal action.
+    /// </summary>
+    public sealed record NoteOperationTarget(
+        string SourceFilePath,
+        string VaultPath);
 
     public bool CanImportPdfIntoNote(NoteItem? note)
         => note is { IsMarkdownFile: true }
@@ -1385,6 +1490,18 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         bool allowConflictOverwrite)
     {
         var note = SelectedNote;
+        return TrySaveNote(note, updateSearchIndex, allowConflictOverwrite);
+    }
+
+    /// <summary>
+    /// Saves a resolved operation target without consulting SelectedNote, which
+    /// prevents a dialog result from persisting changes into a later selection.
+    /// </summary>
+    private bool TrySaveNote(
+        NoteItem? note,
+        bool updateSearchIndex,
+        bool allowConflictOverwrite)
+    {
         if (IsNoteDeleting(note))
         {
             // An authorized deletion owns this dirty draft until it either succeeds or fails.
