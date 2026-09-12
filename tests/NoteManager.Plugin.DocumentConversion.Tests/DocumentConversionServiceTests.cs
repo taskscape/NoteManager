@@ -64,7 +64,14 @@ public sealed class DocumentConversionServiceTests
             File.WriteAllText(output, "Extracted PDF text");
             return SuccessResult();
         });
-        var context = CreateContext(folder.Path);
+        var refreshCount = 0;
+        var context = CreateContext(
+            folder.Path,
+            refreshDocumentsAsync: _ =>
+            {
+                refreshCount++;
+                return Task.CompletedTask;
+            });
 
         var result = await new DocumentConversionService(
             runner,
@@ -77,6 +84,7 @@ public sealed class DocumentConversionServiceTests
             File.ReadAllText(Path.ChangeExtension(sourcePath, ".md")));
         Assert.True(File.Exists(sourcePath));
         Assert.Equal(1, result.Converted);
+        Assert.Equal(1, refreshCount);
     }
 
     [Fact]
@@ -144,12 +152,14 @@ public sealed class DocumentConversionServiceTests
 
     private static PluginHostContext CreateContext(
         string vaultPath,
-        Action<string>? reportStatus = null) =>
+        Action<string>? reportStatus = null,
+        Func<CancellationToken, Task>? refreshDocumentsAsync = null) =>
         new(
             vaultPath,
             Path.Combine(vaultPath, ".note", "plugins", "document-conversion"),
             _ => Task.FromResult(true),
-            reportStatus ?? (_ => { }));
+            reportStatus ?? (_ => { }),
+            RefreshDocumentsAsync: refreshDocumentsAsync);
 
     private static Doc2MdProcessResult SuccessResult() =>
         new(

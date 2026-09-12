@@ -163,7 +163,7 @@ public sealed class DocumentConversionService(
             : $"Document conversion completed with {failures:N0} failure(s): "
               + $"{converted:N0} converted, {skipped:N0} skipped. Successful outputs were preserved.";
         await LogAndReportAsync(context, resultMessage, CancellationToken.None);
-        return new DocumentConversionResult(
+        var result = new DocumentConversionResult(
             failures == 0,
             false,
             resultMessage,
@@ -171,6 +171,12 @@ public sealed class DocumentConversionService(
             converted,
             skipped,
             failures);
+        if (result.Converted > 0 && context.RefreshDocumentsAsync is not null)
+        {
+            await context.RefreshDocumentsAsync(cancellationToken);
+        }
+
+        return result;
 
         async Task LogItemFailureAsync(string path, string detail)
         {

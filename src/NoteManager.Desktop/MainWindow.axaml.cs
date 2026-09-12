@@ -58,7 +58,8 @@ public partial class MainWindow : Window
             SaveActiveNoteForPluginAsync,
             ReportPluginStatus,
             ReportPluginIndicatorStatus,
-            ReportPluginIndicatorVisibility);
+            ReportPluginIndicatorVisibility,
+            RefreshDocumentsForPluginAsync);
         Opened += MainWindow_OnOpened;
         Closing += MainWindow_OnClosing;
         KeyDown += MainWindow_OnKeyDown;
@@ -356,13 +357,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        var convertedPath = importedPdfs
-            .Select(pdf => Path.ChangeExtension(pdf.DestinationPath, ".md"))
-            .FirstOrDefault(File.Exists);
-        // Reload only after the plugin returns so the note list and search index include completed outputs.
-        await ViewModel.LoadMarkdownFolderAsync(
-            ViewModel.CurrentFolderPath,
-            convertedPath);
+        // The conversion completion callback refreshes the document list and index on the UI thread.
     }
 
     private void MainWindow_OnDragOver(object? sender, DragEventArgs e)
@@ -663,6 +658,11 @@ public partial class MainWindow : Window
             DispatcherPriority.Normal,
             cancellationToken);
     }
+
+    private Task RefreshDocumentsForPluginAsync(CancellationToken cancellationToken)
+        => RunOnUiThreadAsync(
+            () => ViewModel.RefreshMarkdownFolderAsync(cancellationToken),
+            cancellationToken);
 
     private void ReportPluginStatus(string message)
         => Dispatcher.UIThread.Post(

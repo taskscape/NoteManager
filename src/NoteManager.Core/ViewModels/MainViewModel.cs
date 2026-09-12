@@ -1407,6 +1407,98 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
     }
 
+    /// <summary>
+    /// Reloads documents created outside the editor without replacing the current draft.
+    /// </summary>
+    public async Task RefreshMarkdownFolderAsync(
+        CancellationToken cancellationToken = default)
+    {
+        if (!IsFolderMode || string.IsNullOrWhiteSpace(CurrentFolderPath))
+        {
+            return;
+        }
+
+        var folderPath = CurrentFolderPath;
+        var folderGeneration = _folderGeneration;
+        var selectedPath = SelectedNote?.SourceFilePath;
+        var selectedFilterKey = SelectedNavigationItem?.FilterKey ?? AllNotesFilterKey;
+        var dirtyNotes = _allNotes
+            .Where(note => note.IsDirty)
+            .ToDictionary(note => note.SourceFilePath, StringComparer.OrdinalIgnoreCase);
+
+        try
+        {
+            var result = await Task.Run(
+                () => MarkdownFolderService.LoadFolder(folderPath),
+                cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!IsFolderMode
+                || folderGeneration != _folderGeneration
+                || !CurrentFolderPath.Equals(folderPath, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            // Keep unsaved editor instances instead of replacing their in-memory drafts with disk content.
+            var refreshedNotes = result.Notes
+                .Select(note => dirtyNotes.TryGetValue(note.SourceFilePath, out var dirtyNote)
+                    ? dirtyNote
+                    : note)
+                .ToList();
+            foreach (var dirtyNote in dirtyNotes.Values)
+            {
+                if (!refreshedNotes.Any(note => note.SourceFilePath.Equals(
+                        dirtyNote.SourceFilePath,
+                        StringComparison.OrdinalIgnoreCase)))
+                {
+                    refreshedNotes.Add(dirtyNote);
+                }
+            }
+
+            _mediaIndex = result.MediaIndex;
+            _allNotes.ReplaceRange(refreshedNotes);
+            RebuildTagNavigation();
+
+            var restoredNavigation = NavigationItems.FirstOrDefault(item =>
+                item.FilterKey.Equals(selectedFilterKey, StringComparison.OrdinalIgnoreCase))
+                ?? NavigationItems.FirstOrDefault(item => item.FilterKey == AllNotesFilterKey);
+            SetSelectedNavigationItemAfterRefresh(restoredNavigation);
+
+            var restoredSelection = selectedPath is null
+                ? null
+                : _allNotes.FirstOrDefault(note => note.SourceFilePath.Equals(
+                    selectedPath,
+                    StringComparison.OrdinalIgnoreCase));
+            if (restoredSelection is not null)
+            {
+                SelectedNote = restoredSelection;
+            }
+
+            RefreshNoteFilter();
+            SetStatus($"Refreshed {result.Notes.Count:N0} Markdown note(s) from {CurrentFolderPath}");
+            StartBackgroundIndex(CurrentFolderPath);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Folder changes and shutdown supersede a conversion-triggered refresh.
+        }
+        catch (Exception exception) when (
+            exception is IOException
+            or UnauthorizedAccessException
+            or NotSupportedException)
+        {
+            SetStatus($"Converted documents could not be refreshed: {exception.Message}");
+        }
+    }
+
+    private void SetSelectedNavigationItemAfterRefresh(NavigationItem? value)
+    {
+        if (SetProperty(ref _selectedNavigationItem, value))
+        {
+            CenterHeading = value?.Label ?? "All notes";
+        }
+    }
+
     private void StartBackgroundIndex(string folderPath)
     {
         _indexCancellation?.Cancel();

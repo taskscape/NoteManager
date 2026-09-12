@@ -35,4 +35,5 @@ public sealed record PluginHostContext(
     string ConfigurationDirectory,
     Func<CancellationToken, Task<bool>> SaveActiveNoteAsync,
     Action<string> ReportStatus,
-    Action<PluginIndicatorStatus>? ReportIndicatorStatus = null);
+    Action<PluginIndicatorStatus>? ReportIndicatorStatus = null,
+    Func<CancellationToken, Task>? RefreshDocumentsAsync = null);

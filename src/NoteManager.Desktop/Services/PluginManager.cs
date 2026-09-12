@@ -66,6 +66,7 @@ public sealed class PluginManager
     private readonly SemaphoreSlim _lifecycleLock = new(1, 1);
     private readonly PluginActivationStore _activationStore = new();
     private readonly Func<CancellationToken, Task<bool>> _saveActiveNoteAsync;
+    private readonly Func<CancellationToken, Task>? _refreshDocumentsAsync;
     private readonly Action<string> _reportStatus;
     private readonly Action<PluginIndicatorStatus> _reportIndicatorStatus;
     private readonly Action<string, bool> _reportIndicatorVisibility;
@@ -77,9 +78,11 @@ public sealed class PluginManager
         Func<CancellationToken, Task<bool>> saveActiveNoteAsync,
         Action<string> reportStatus,
         Action<PluginIndicatorStatus> reportIndicatorStatus,
-        Action<string, bool> reportIndicatorVisibility)
+        Action<string, bool> reportIndicatorVisibility,
+        Func<CancellationToken, Task>? refreshDocumentsAsync = null)
     {
         _saveActiveNoteAsync = saveActiveNoteAsync;
+        _refreshDocumentsAsync = refreshDocumentsAsync;
         _reportStatus = reportStatus;
         _reportIndicatorStatus = reportIndicatorStatus;
         _reportIndicatorVisibility = reportIndicatorVisibility;
@@ -256,7 +259,8 @@ public sealed class PluginManager
                 configurationDirectory,
                 _saveActiveNoteAsync,
                 _reportStatus,
-                _reportIndicatorStatus);
+                _reportIndicatorStatus,
+                _refreshDocumentsAsync);
             await entry.DiscoveredPlugin.Instance.StartAsync(context, cancellationToken);
             entry.IsRunning = true;
             entry.Status = "Active";

@@ -109,6 +109,52 @@ public sealed class PdfDropImportViewModelTests
     }
 
     [Fact]
+    public async Task RefreshMarkdownFolderAsync_AddsConvertedNotesAndPreservesTheUnsavedSelection()
+    {
+        var testRoot = Path.Combine(
+            Path.GetTempPath(),
+            $"NoteManager.App.Tests.{Guid.NewGuid():N}");
+        var vaultRoot = Directory.CreateDirectory(
+            Path.Combine(testRoot, "vault")).FullName;
+        var notePath = Path.Combine(vaultRoot, "plan.md");
+        File.WriteAllText(notePath, "# Saved plan");
+
+        using var viewModel = new MainViewModel();
+        try
+        {
+            await viewModel.LoadMarkdownFolderAsync(vaultRoot);
+            await WaitForIndexAsync(viewModel);
+            var selectedNote = Assert.Single(viewModel.NotesView);
+            selectedNote.PlainTextContent = "# Unsaved draft";
+            File.WriteAllText(
+                Path.Combine(vaultRoot, "converted.md"),
+                "background conversion search marker");
+
+            await viewModel.RefreshMarkdownFolderAsync();
+            await WaitForIndexAsync(viewModel);
+
+            Assert.Same(selectedNote, viewModel.SelectedNote);
+            Assert.True(selectedNote.IsDirty);
+            Assert.Equal("# Unsaved draft", selectedNote.PlainTextContent);
+            Assert.Equal("# Saved plan", File.ReadAllText(notePath));
+            Assert.Contains(viewModel.NotesView, note => note.FileName == "converted.md");
+
+            viewModel.SearchText = "background conversion search marker";
+            await WaitForSearchAsync(viewModel);
+            Assert.Contains(viewModel.NotesView, note => note.FileName == "converted.md");
+        }
+        finally
+        {
+            viewModel.Dispose();
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(testRoot))
+            {
+                Directory.Delete(testRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public async Task EditingMarkdown_RefreshesMixedMediaPreviewsInEncounterOrder()
     {
         var testRoot = Path.Combine(
@@ -174,5 +220,16 @@ public sealed class PdfDropImportViewModelTests
         }
 
         Assert.Equal(expectedCount, note.EmbeddedMediaReferences.Length);
+    }
+
+    private static async Task WaitForSearchAsync(MainViewModel viewModel)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (!viewModel.IsSearchActive && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(25);
+        }
+
+        Assert.True(viewModel.IsSearchActive);
     }
 }
