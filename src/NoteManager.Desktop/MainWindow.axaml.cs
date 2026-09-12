@@ -465,6 +465,7 @@ public partial class MainWindow : Window
             return;
         }
 
+        ViewModel.RefreshPublishAttachmentPreview();
         var dialog = new ShareDialog(ViewModel);
         _shareDialog = dialog;
         ViewModel.IsSharePanelOpen = true;

@@ -12,6 +12,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 {
     private readonly RangeObservableCollection<NoteItem> _allNotes;
     private readonly RangeObservableCollection<NoteItem> _visibleNotes;
+    private readonly ObservableCollection<PublicationAttachment> _publishAttachments = [];
     private readonly InfostackerPublishingService _infostackerPublishingService;
     private readonly ApplicationActivityLog _activityLog;
     private CancellationTokenSource? _indexCancellation;
@@ -67,6 +68,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         _activityLog = activityLog ?? new ApplicationActivityLog();
         _allNotes = new RangeObservableCollection<NoteItem>();
         _visibleNotes = new RangeObservableCollection<NoteItem>();
+        PublishAttachments = new ReadOnlyObservableCollection<PublicationAttachment>(
+            _publishAttachments);
         NavigationItems = [];
 
         NewNoteCommand = new AsyncRelayCommand(_ => CreateNewNoteAsync(), _ => CanCreateNote);
@@ -111,6 +114,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     public ObservableCollection<NavigationItem> NavigationItems { get; }
     public ObservableCollection<NoteItem> NotesView => _visibleNotes;
+    public ReadOnlyObservableCollection<PublicationAttachment> PublishAttachments { get; }
 
     public AsyncRelayCommand NewNoteCommand { get; }
     public RelayCommand ClearTagFilterCommand { get; }
@@ -275,6 +279,37 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         => IsPublishing
             ? "Publishing…"
             : "Publish and copy public link";
+
+    public string PublishAttachmentSummary
+    {
+        get
+        {
+            var unavailablePdfs = _publishAttachments.Count(
+                attachment => attachment.IsPdf && !attachment.IsAvailable);
+            if (unavailablePdfs > 0)
+            {
+                return unavailablePdfs == 1
+                    ? "1 referenced PDF must be restored before publishing."
+                    : $"{unavailablePdfs:N0} referenced PDFs must be restored before publishing.";
+            }
+
+            var unavailableAttachments = _publishAttachments.Count(
+                attachment => !attachment.IsAvailable);
+            if (unavailableAttachments > 0)
+            {
+                return unavailableAttachments == 1
+                    ? "1 non-PDF attachment cannot be included."
+                    : $"{unavailableAttachments:N0} non-PDF attachments cannot be included.";
+            }
+
+            return _publishAttachments.Count switch
+            {
+                0 => "No attachments will be included.",
+                1 => "1 attachment will be included.",
+                _ => $"{_publishAttachments.Count:N0} attachments will be included."
+            };
+        }
+    }
 
     public bool IsSynced
     {
@@ -836,6 +871,20 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             return null;
         }
 
+        RefreshPublishAttachmentPreview();
+        var missingPdfs = _publishAttachments
+            .Where(attachment => attachment.IsPdf && !attachment.IsAvailable)
+            .Select(attachment => attachment.FileName)
+            .ToArray();
+        if (missingPdfs.Length > 0)
+        {
+            ShareStatusText =
+                "Cannot publish because these PDFs are referenced in Markdown but could not be found and included: "
+                + string.Join(", ", missingPdfs);
+            SetStatus(ShareStatusText);
+            return null;
+        }
+
         CancelPublishing();
         _publishCancellation = new CancellationTokenSource();
         var cancellationToken = _publishCancellation.Token;
@@ -877,6 +926,48 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     {
         ShareStatusText = "Public link copied to the clipboard.";
         SetStatus($"Published note to Infostacker: {publicUrl}");
+    }
+
+    /// <summary>
+    /// Resolves attachments from the current editor text before the share
+    /// dialog appears. The publisher validates again from the saved file.
+    /// </summary>
+    public void RefreshPublishAttachmentPreview()
+    {
+        _publishAttachments.Clear();
+        var note = SelectedNote;
+        if (note is null || !CanDeleteSelectedNote)
+        {
+            NotifyPublishAttachmentPreviewChanged();
+            return;
+        }
+
+        try
+        {
+            foreach (var attachment in _infostackerPublishingService.PreviewAttachments(
+                         note,
+                         CurrentFolderPath,
+                         note.PlainTextContent))
+            {
+                _publishAttachments.Add(attachment);
+            }
+
+            ShareStatusText = _publishAttachments.Any(
+                attachment => attachment.IsPdf && !attachment.IsAvailable)
+                ? "A referenced PDF is missing. Publishing is blocked until it is restored or its embed is removed."
+                : PublishAttachmentSummary;
+        }
+        catch (Exception exception) when (
+            exception is IOException
+            or UnauthorizedAccessException
+            or ArgumentException)
+        {
+            ShareStatusText = $"Could not inspect attachments: {exception.Message}";
+        }
+        finally
+        {
+            NotifyPublishAttachmentPreviewChanged();
+        }
     }
 
     public void ReportClipboardFailure(string message, Exception? exception = null)
@@ -1631,6 +1722,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     }
 
     private void SetStatus(string message) => StatusText = message;
+
+    private void NotifyPublishAttachmentPreviewChanged()
+        => OnPropertyChanged(nameof(PublishAttachmentSummary));
 
     private void AttachSelectedNote(NoteItem? note)
     {

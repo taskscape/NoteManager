@@ -11,6 +11,22 @@ public sealed class InfostackerPublishingException(
     string message,
     Exception? innerException = null) : Exception(message, innerException);
 
+public sealed record PublicationAttachment(
+    string FileName,
+    string? ResolvedPath,
+    bool IsPdf,
+    bool IsImplicit,
+    string? Issue)
+{
+    public bool IsAvailable => Issue is null && ResolvedPath is not null;
+
+    public string DisplayText => IsAvailable
+        ? IsImplicit
+            ? $"{FileName} (original PDF, added at the end of the shared note)"
+            : FileName
+        : $"{FileName} — {Issue}";
+}
+
 public sealed partial class InfostackerPublishingService
 {
     private const long MaximumUploadBytes = 100L * 1024 * 1024;
@@ -54,17 +70,17 @@ public sealed partial class InfostackerPublishingService
             var source = await File
                 .ReadAllTextAsync(notePath, cancellationToken)
                 .ConfigureAwait(false);
+            var publication = PreparePublication(notePath, rootPath, source);
+            EnsureReferencedPdfsAreAvailable(publication.Attachments);
             var title = Path.GetFileNameWithoutExtension(notePath);
-            var publishedMarkdown = $"{title}\n\n{source}";
+            var publishedMarkdown = $"{title}\n\n{publication.Markdown}";
             var markdownBytes = Encoding.UTF8.GetByteCount(publishedMarkdown);
-            var attachments = await Task
-                .Run(
-                    () => ResolveAttachments(source, rootPath),
-                    cancellationToken)
-                .ConfigureAwait(false);
+            var attachments = publication.Attachments
+                .Where(attachment => attachment.IsAvailable)
+                .ToArray();
             var totalBytes = attachments.Aggregate(
                 (long)markdownBytes,
-                (sum, path) => checked(sum + new FileInfo(path).Length));
+                (sum, attachment) => checked(sum + new FileInfo(attachment.ResolvedPath!).Length));
             if (totalBytes > MaximumUploadBytes)
             {
                 throw new InfostackerPublishingException(
@@ -76,13 +92,13 @@ public sealed partial class InfostackerPublishingService
                 new StringContent(publishedMarkdown, Encoding.UTF8),
                 "markdown");
 
-            foreach (var attachmentPath in attachments)
+            foreach (var attachment in attachments)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 try
                 {
                     var stream = new FileStream(
-                        attachmentPath,
+                        attachment.ResolvedPath!,
                         FileMode.Open,
                         FileAccess.Read,
                         FileShare.ReadWrite | FileShare.Delete,
@@ -91,13 +107,20 @@ public sealed partial class InfostackerPublishingService
                     var content = new StreamContent(stream);
                     content.Headers.ContentType =
                         new MediaTypeHeaderValue("application/octet-stream");
-                    form.Add(content, "files", Path.GetFileName(attachmentPath));
+                    form.Add(content, "files", attachment.FileName);
                 }
                 catch (Exception exception) when (
                     exception is IOException or UnauthorizedAccessException)
                 {
-                    // Match the plugin: an unreadable attachment is skipped while
-                    // the Markdown note itself is still published.
+                    if (attachment.IsPdf)
+                    {
+                        throw new InfostackerPublishingException(
+                            $"Cannot publish because the referenced PDF '{attachment.FileName}' could not be included.",
+                            exception);
+                    }
+
+                    // Preserve the existing best-effort behavior for non-PDF
+                    // attachments. Explicit PDFs are mandatory instead.
                 }
             }
 
@@ -165,91 +188,168 @@ public sealed partial class InfostackerPublishingService
         }
     }
 
-    private static IReadOnlyList<string> ResolveAttachments(
-        string markdown,
-        string rootPath)
+    /// <summary>
+    /// Builds the attachment list shown by the share dialog from the current
+    /// editor content. Publishing repeats this work against the saved file so a
+    /// stale preview cannot permit an invalid PDF upload.
+    /// </summary>
+    public IReadOnlyList<PublicationAttachment> PreviewAttachments(
+        NoteItem note,
+        string vaultRoot,
+        string markdown)
     {
-        var targets = AttachmentEmbedRegex()
-            .Matches(markdown)
-            .Select(match => NormalizeAttachmentTarget(
-                match.Groups["target"].Value))
-            .Where(target => target.Length > 0)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-        if (targets.Length == 0)
+        ArgumentNullException.ThrowIfNull(note);
+        ArgumentException.ThrowIfNullOrWhiteSpace(vaultRoot);
+        ArgumentNullException.ThrowIfNull(markdown);
+
+        var notePath = Path.GetFullPath(note.SourceFilePath);
+        var rootPath = Path.GetFullPath(vaultRoot);
+        if (!note.IsMarkdownFile
+            || !File.Exists(notePath)
+            || !IsPathInsideRoot(notePath, rootPath))
         {
             return [];
         }
 
-        var files = EnumerateVaultFiles(rootPath)
-            .Select(Path.GetFullPath)
-            .ToArray();
-        var relativePaths = files
-            .GroupBy(
-                path => NormalizeVaultPath(Path.GetRelativePath(rootPath, path)),
-                StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(
-                group => group.Key,
-                group => group.First(),
-                StringComparer.OrdinalIgnoreCase);
-        var fileNames = files
-            .GroupBy(
-                path => Path.GetFileName(path),
-                StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(
-                group => group.Key,
-                group => group.OrderBy(
-                    path => path,
-                    StringComparer.OrdinalIgnoreCase).ToArray(),
-                StringComparer.OrdinalIgnoreCase);
+        return PreparePublication(notePath, rootPath, markdown).Attachments;
+    }
 
-        var resolved = new List<string>(targets.Length);
-        foreach (var target in targets)
+    private static PreparedPublication PreparePublication(
+        string notePath,
+        string rootPath,
+        string source)
+    {
+        var attachments = new List<PublicationAttachment>();
+        var resolvedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (Match match in AttachmentEmbedRegex().Matches(source))
         {
-            var normalizedTarget = NormalizeVaultPath(target);
-            if (relativePaths.TryGetValue(normalizedTarget, out var exactPath))
+            var target = NormalizeAttachmentTarget(match.Groups["target"].Value);
+            if (target.Length == 0)
             {
-                resolved.Add(exactPath);
                 continue;
             }
 
-            var fileName = Path.GetFileName(target.Replace(
-                '/',
-                Path.DirectorySeparatorChar));
-            if (!string.IsNullOrWhiteSpace(fileName)
-                && fileNames.TryGetValue(fileName, out var matches))
+            var fileName = Path.GetFileName(target.Replace('/', Path.DirectorySeparatorChar));
+            var isPdf = Path.GetExtension(fileName).Equals(
+                ".pdf",
+                StringComparison.OrdinalIgnoreCase);
+            var resolvedPath = ResolveExplicitAttachment(target, notePath, rootPath);
+            if (resolvedPath is not null && resolvedPaths.Add(resolvedPath))
             {
-                resolved.Add(matches[0]);
+                attachments.Add(new PublicationAttachment(
+                    Path.GetFileName(resolvedPath),
+                    resolvedPath,
+                    isPdf,
+                    IsImplicit: false,
+                    Issue: null));
+                continue;
+            }
+
+            if (resolvedPath is null)
+            {
+                attachments.Add(new PublicationAttachment(
+                    fileName,
+                    ResolvedPath: null,
+                    IsPdf: isPdf,
+                    IsImplicit: false,
+                    isPdf
+                        ? "referenced in Markdown but not found inside the current folder"
+                        : "referenced in Markdown but not found and will not be included"));
             }
         }
 
-        return resolved
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
+        var implicitEmbeds = new List<string>();
+        foreach (var originalPdfPath in FindOriginalPdfPaths(notePath, rootPath))
+        {
+            if (!resolvedPaths.Add(originalPdfPath))
+            {
+                continue;
+            }
+
+            attachments.Add(new PublicationAttachment(
+                Path.GetFileName(originalPdfPath),
+                originalPdfPath,
+                IsPdf: true,
+                IsImplicit: true,
+                Issue: null));
+            implicitEmbeds.Add($"![[{EscapeEmbedTarget(Path.GetRelativePath(
+                Path.GetDirectoryName(notePath)!,
+                originalPdfPath))}]]");
+        }
+
+        var markdown = implicitEmbeds.Count == 0
+            ? source
+            : $"{source.TrimEnd()}\n\n{string.Join(Environment.NewLine, implicitEmbeds)}";
+        return new PreparedPublication(markdown, attachments);
     }
 
-    private static IEnumerable<string> EnumerateVaultFiles(string rootPath)
+    private static void EnsureReferencedPdfsAreAvailable(
+        IEnumerable<PublicationAttachment> attachments)
     {
-        var options = new EnumerationOptions
+        var missingPdfs = attachments
+            .Where(attachment => attachment.IsPdf && !attachment.IsAvailable)
+            .Select(attachment => attachment.FileName)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (missingPdfs.Length > 0)
         {
-            RecurseSubdirectories = true,
-            IgnoreInaccessible = true,
-            MatchCasing = MatchCasing.CaseInsensitive,
-            ReturnSpecialDirectories = false
-        };
-        var indexPrefix = Path.Combine(rootPath, ".notes")
-                          + Path.DirectorySeparatorChar;
+            throw new InfostackerPublishingException(
+                "Cannot publish because these PDFs are referenced in Markdown but could not be found and included: "
+                + string.Join(", ", missingPdfs));
+        }
+    }
 
-        foreach (var path in Directory.EnumerateFiles(rootPath, "*", options))
+    private static string? ResolveExplicitAttachment(
+        string target,
+        string notePath,
+        string rootPath)
+    {
+        var windowsTarget = target.Replace('/', Path.DirectorySeparatorChar);
+        var noteFolder = Path.GetDirectoryName(notePath)!;
+        var isExplicitRelative = target.StartsWith("./", StringComparison.Ordinal)
+                                 || target.StartsWith("../", StringComparison.Ordinal)
+                                 || target.StartsWith(@".\", StringComparison.Ordinal)
+                                 || target.StartsWith(@"..\", StringComparison.Ordinal);
+        var hasFolder = target.Contains('/') || target.Contains('\\');
+        var candidate = isExplicitRelative
+            ? Path.GetFullPath(Path.Combine(noteFolder, windowsTarget))
+            : hasFolder
+                ? Path.GetFullPath(Path.Combine(rootPath, windowsTarget))
+                : Path.GetFullPath(Path.Combine(noteFolder, windowsTarget));
+
+        if (IsPathInsideRoot(candidate, rootPath) && File.Exists(candidate))
         {
-            var fullPath = Path.GetFullPath(path);
-            if (!fullPath.StartsWith(
-                    indexPrefix,
-                    StringComparison.OrdinalIgnoreCase))
+            return candidate;
+        }
+
+        // A bare filename can deliberately refer to a file at the vault root;
+        // do not search every matching basename because that can select a PDF
+        // from an unrelated folder.
+        if (!hasFolder)
+        {
+            candidate = Path.GetFullPath(Path.Combine(rootPath, windowsTarget));
+            if (IsPathInsideRoot(candidate, rootPath) && File.Exists(candidate))
             {
-                yield return fullPath;
+                return candidate;
             }
         }
+
+        return null;
+    }
+
+    private static IEnumerable<string> FindOriginalPdfPaths(string notePath, string rootPath)
+    {
+        var candidates = new[]
+        {
+            Path.ChangeExtension(notePath, ".pdf"),
+            $"{notePath}.pdf"
+        };
+
+        return candidates
+            .Select(Path.GetFullPath)
+            .Where(path => IsPathInsideRoot(path, rootPath) && File.Exists(path))
+            .Distinct(StringComparer.OrdinalIgnoreCase);
     }
 
     private static string NormalizeAttachmentTarget(string target)
@@ -274,8 +374,13 @@ public sealed partial class InfostackerPublishingService
         return value.Trim();
     }
 
-    private static string NormalizeVaultPath(string path)
-        => path.Replace('\\', '/').TrimStart('/');
+    private static string EscapeEmbedTarget(string relativePath) => relativePath
+        .Replace(Path.DirectorySeparatorChar, '/')
+        .Replace("%", "%25", StringComparison.Ordinal)
+        .Replace("#", "%23", StringComparison.Ordinal)
+        .Replace("|", "%7C", StringComparison.Ordinal)
+        .Replace("[", "%5B", StringComparison.Ordinal)
+        .Replace("]", "%5D", StringComparison.Ordinal);
 
     private static bool IsPathInsideRoot(string path, string rootPath)
     {
@@ -303,4 +408,8 @@ public sealed partial class InfostackerPublishingService
 
     [GeneratedRegex(@"!\[\[(?<target>.*?)\]\]")]
     private static partial Regex AttachmentEmbedRegex();
+
+    private sealed record PreparedPublication(
+        string Markdown,
+        IReadOnlyList<PublicationAttachment> Attachments);
 }
