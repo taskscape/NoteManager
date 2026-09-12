@@ -34,7 +34,8 @@ public sealed record NoteSearchQueryResult(
 public static class NoteSearchIndexService
 {
     private const int BatchSize = 200;
-    private const int SchemaVersion = 2;
+    // Schema version 3 persists a path key collation that matches the indexed volume.
+    private const int SchemaVersion = 3;
     private const string IndexFolderName = ".notes";
     private const string DatabaseFileName = "search.db";
 
@@ -57,16 +58,18 @@ public static class NoteSearchIndexService
         var indexFolder = Path.Combine(rootFolder, IndexFolderName);
         Directory.CreateDirectory(indexFolder);
         var databasePath = Path.Combine(indexFolder, DatabaseFileName);
-        var files = EnumerateMarkdownFiles(rootFolder, indexFolder, cancellationToken);
+        // Use the vault volume's identity rules for every path-keyed indexing collection.
+        var pathComparer = FileSystemPathIdentity.GetComparer(indexFolder);
+        var files = EnumerateMarkdownFiles(rootFolder, indexFolder, pathComparer, cancellationToken);
         if (cancellationToken.IsCancellationRequested)
         {
             return new NoteSearchIndexResult(0, 0, 0, 0, databasePath);
         }
 
         using var connection = OpenConnection(databasePath, readOnly: false);
-        InitializeDatabase(connection);
+        InitializeDatabase(connection, pathComparer);
 
-        var indexedFiles = ReadIndexedFiles(connection, cancellationToken);
+        var indexedFiles = ReadIndexedFiles(connection, pathComparer, cancellationToken);
         if (cancellationToken.IsCancellationRequested)
         {
             return new NoteSearchIndexResult(files.Length, 0, 0, 0, databasePath);
@@ -74,7 +77,7 @@ public static class NoteSearchIndexService
 
         var currentPaths = files
             .Select(file => file.FullPath)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            .ToHashSet(pathComparer);
         var removedPaths = indexedFiles.Keys
             .Where(path => !currentPaths.Contains(path))
             .ToArray();
@@ -262,7 +265,9 @@ public static class NoteSearchIndexService
         try
         {
             using var connection = OpenConnection(databasePath, readOnly: true);
-            var documents = ReadSearchDocuments(connection, cancellationToken);
+            // Read the persisted collation so searches use the same identity as the index that produced them.
+            var pathComparer = ReadPathComparer(connection);
+            var documents = ReadSearchDocuments(connection, pathComparer, cancellationToken);
             if (documents is null)
             {
                 return CanceledSearchResult(query.Mode);
@@ -289,8 +294,8 @@ public static class NoteSearchIndexService
                     ? documents.Values.ToDictionary(
                         document => document.Path,
                         _ => new TermMatch(0),
-                        StringComparer.OrdinalIgnoreCase)
-                    : SearchTerm(connection, term, cancellationToken);
+                        pathComparer)
+                    : SearchTerm(connection, term, pathComparer, cancellationToken);
                 if (matches is null)
                 {
                     return CanceledSearchResult(query.Mode);
@@ -385,6 +390,7 @@ public static class NoteSearchIndexService
     private static MarkdownFileSnapshot[] EnumerateMarkdownFiles(
         string rootFolder,
         string indexFolder,
+        StringComparer pathComparer,
         CancellationToken cancellationToken)
     {
         var options = new EnumerationOptions
@@ -406,7 +412,7 @@ public static class NoteSearchIndexService
             }
 
             var fullPath = Path.GetFullPath(path);
-            if (fullPath.StartsWith(indexPrefix, StringComparison.OrdinalIgnoreCase))
+            if (FileSystemPathIdentity.StartsWith(fullPath, indexPrefix, pathComparer))
             {
                 continue;
             }
@@ -438,8 +444,12 @@ public static class NoteSearchIndexService
         return connection;
     }
 
-    private static void InitializeDatabase(SqliteConnection connection)
+    private static void InitializeDatabase(SqliteConnection connection, StringComparer pathComparer)
     {
+        // The primary-key collation must follow the real volume, otherwise SQLite merges case-distinct notes before search begins.
+        var pathCollation = pathComparer.Equals(StringComparer.OrdinalIgnoreCase)
+            ? "NOCASE"
+            : "BINARY";
         using (var configure = connection.CreateCommand())
         {
             configure.CommandText =
@@ -455,7 +465,9 @@ public static class NoteSearchIndexService
         {
             versionCommand.CommandText = "PRAGMA user_version;";
             var currentVersion = Convert.ToInt32(versionCommand.ExecuteScalar());
-            if (currentVersion != SchemaVersion)
+            // Rebuild after a vault is moved between volumes with different case semantics as well as after a schema migration.
+            if (currentVersion != SchemaVersion
+                || !HasPathCollation(connection, pathCollation))
             {
                 using var rebuild = connection.CreateCommand();
                 rebuild.CommandText =
@@ -470,9 +482,9 @@ public static class NoteSearchIndexService
 
         using var create = connection.CreateCommand();
         create.CommandText =
-            """
+            $"""
             CREATE TABLE IF NOT EXISTS indexed_notes (
-                path TEXT PRIMARY KEY COLLATE NOCASE,
+                path TEXT PRIMARY KEY COLLATE {pathCollation},
                 relative_path TEXT NOT NULL,
                 title TEXT NOT NULL,
                 tags TEXT NOT NULL,
@@ -498,20 +510,22 @@ public static class NoteSearchIndexService
                 tokenize = 'trigram'
             );
 
-            PRAGMA user_version = 2;
+            PRAGMA user_version = 3;
             """;
         create.ExecuteNonQuery();
     }
 
     private static Dictionary<string, IndexedFileSnapshot> ReadIndexedFiles(
         SqliteConnection connection,
+        StringComparer pathComparer,
         CancellationToken cancellationToken)
     {
         using var command = connection.CreateCommand();
         command.CommandText =
             "SELECT path, modified_utc_ticks, file_length FROM indexed_notes;";
 
-        var indexed = new Dictionary<string, IndexedFileSnapshot>(StringComparer.OrdinalIgnoreCase);
+        // Metadata comparison must not treat case-distinct files as one incremental update.
+        var indexed = new Dictionary<string, IndexedFileSnapshot>(pathComparer);
         using var reader = command.ExecuteReader();
         while (reader.Read())
         {
@@ -701,8 +715,34 @@ public static class NoteSearchIndexService
         literalCommand.ExecuteNonQuery();
     }
 
+    private static StringComparer ReadPathComparer(SqliteConnection connection)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandTimeout = 2;
+        command.CommandText =
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'indexed_notes';";
+        var schema = command.ExecuteScalar() as string;
+        // Older databases used NOCASE; the default preserves distinct identities if schema inspection is unavailable.
+        return schema?.Contains("COLLATE NOCASE", StringComparison.OrdinalIgnoreCase) == true
+            ? StringComparer.OrdinalIgnoreCase
+            : StringComparer.Ordinal;
+    }
+
+    private static bool HasPathCollation(SqliteConnection connection, string pathCollation)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText =
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'indexed_notes';";
+        var schema = command.ExecuteScalar() as string;
+        // A missing table is rebuilt through the normal create path after version or volume validation.
+        return schema?.Contains(
+            $"COLLATE {pathCollation}",
+            StringComparison.OrdinalIgnoreCase) == true;
+    }
+
     private static Dictionary<string, SearchDocument>? ReadSearchDocuments(
         SqliteConnection connection,
+        StringComparer pathComparer,
         CancellationToken cancellationToken)
     {
         using var command = connection.CreateCommand();
@@ -714,7 +754,8 @@ public static class NoteSearchIndexService
             """;
 
         var documents =
-            new Dictionary<string, SearchDocument>(StringComparer.OrdinalIgnoreCase);
+            // Search documents retain one entry per filesystem identity.
+            new Dictionary<string, SearchDocument>(pathComparer);
         using var reader = command.ExecuteReader();
         while (reader.Read())
         {
@@ -737,14 +778,16 @@ public static class NoteSearchIndexService
     private static IReadOnlyDictionary<string, TermMatch>? SearchTerm(
         SqliteConnection connection,
         NoteSearchTerm term,
+        StringComparer pathComparer,
         CancellationToken cancellationToken)
         => !term.IsPhrase && NoteSearchQueryParser.IsWordTerm(term.Text)
-            ? SearchWordTerm(connection, term, cancellationToken)
-            : SearchLiteralTerm(connection, term, cancellationToken);
+            ? SearchWordTerm(connection, term, pathComparer, cancellationToken)
+            : SearchLiteralTerm(connection, term, pathComparer, cancellationToken);
 
     private static IReadOnlyDictionary<string, TermMatch>? SearchWordTerm(
         SqliteConnection connection,
         NoteSearchTerm term,
+        StringComparer pathComparer,
         CancellationToken cancellationToken)
     {
         using var command = connection.CreateCommand();
@@ -766,7 +809,8 @@ public static class NoteSearchIndexService
             CreateWordFtsQuery(term));
 
         var matches =
-            new Dictionary<string, TermMatch>(StringComparer.OrdinalIgnoreCase);
+            // Term membership keys are file identities, not case-insensitive search text.
+            new Dictionary<string, TermMatch>(pathComparer);
         using var reader = command.ExecuteReader();
         while (reader.Read())
         {
@@ -786,6 +830,7 @@ public static class NoteSearchIndexService
     private static IReadOnlyDictionary<string, TermMatch>? SearchLiteralTerm(
         SqliteConnection connection,
         NoteSearchTerm term,
+        StringComparer pathComparer,
         CancellationToken cancellationToken)
     {
         using var command = connection.CreateCommand();
@@ -807,7 +852,8 @@ public static class NoteSearchIndexService
         command.Parameters.AddWithValue("$pattern", $"%{term.Text}%");
 
         var matches =
-            new Dictionary<string, TermMatch>(StringComparer.OrdinalIgnoreCase);
+            // Literal query matching stays case-insensitive in SQLite; only the result identity is volume-aware.
+            new Dictionary<string, TermMatch>(pathComparer);
         using var reader = command.ExecuteReader();
         while (reader.Read())
         {

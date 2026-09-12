@@ -5,16 +5,20 @@ namespace NoteManager.App.Services;
 public sealed class EmbeddedMediaVaultIndex
 {
     private readonly string _rootFolder;
+    // The media snapshot must retain the same file identity semantics as the active vault.
+    private readonly StringComparer _pathComparer;
     // Keep the indexed media snapshot so viewer resolution shares its candidate set with publication.
     private readonly IReadOnlyList<string> _mediaPaths;
     private readonly IReadOnlyDictionary<string, string[]> _filesByFolder;
 
     private EmbeddedMediaVaultIndex(
         string rootFolder,
+        StringComparer pathComparer,
         IReadOnlyList<string> mediaPaths,
         IReadOnlyDictionary<string, string[]> filesByFolder)
     {
         _rootFolder = rootFolder;
+        _pathComparer = pathComparer;
         _mediaPaths = mediaPaths;
         _filesByFolder = filesByFolder;
     }
@@ -23,11 +27,13 @@ public sealed class EmbeddedMediaVaultIndex
         string rootFolder,
         EnumerationOptions options)
     {
+        // Preserve case-distinct folders and attachments on case-sensitive vault volumes.
+        var pathComparer = FileSystemPathIdentity.GetComparer(rootFolder);
         // Capture every file once because related-document matching needs formats
         // beyond the PDF and image paths used by explicit Markdown embeds.
         var allPaths = Directory
             .EnumerateFiles(rootFolder, "*", options)
-            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(path => path, pathComparer)
             .ToArray();
         var mediaPaths = allPaths
             .Where(path => EmbeddedMediaReference.TryGetKind(path, out _))
@@ -38,14 +44,15 @@ public sealed class EmbeddedMediaVaultIndex
         var filesByFolder = allPaths
             .GroupBy(
                 path => Path.GetDirectoryName(path) ?? rootFolder,
-                StringComparer.OrdinalIgnoreCase)
+                pathComparer)
             .ToDictionary(
                 group => group.Key,
                 group => group.ToArray(),
-                StringComparer.OrdinalIgnoreCase);
+                pathComparer);
 
         return new EmbeddedMediaVaultIndex(
             rootFolder,
+            pathComparer,
             mediaPaths,
             filesByFolder);
     }
@@ -66,7 +73,7 @@ public sealed class EmbeddedMediaVaultIndex
         // keeps its original order, while automatic attachments remain below it.
         var resolvedPaths = new HashSet<string>(
             embeddedReferences.Select(reference => reference.ResolvedPath),
-            StringComparer.OrdinalIgnoreCase);
+            _pathComparer);
         var relatedDocuments = ResolveRelatedDocuments(markdownFilePath)
             .Where(reference => resolvedPaths.Add(reference.ResolvedPath));
 
@@ -92,9 +99,7 @@ public sealed class EmbeddedMediaVaultIndex
         var markdownStem = Path.GetFileNameWithoutExtension(markdownFileName);
 
         return siblingPaths
-            .Where(path => !path.Equals(
-                fullMarkdownPath,
-                StringComparison.OrdinalIgnoreCase))
+            .Where(path => !_pathComparer.Equals(path, fullMarkdownPath))
             // Markdown siblings are notes in their own right and must not become
             // reciprocal attachments of another Markdown note.
             .Where(path => !Path.GetExtension(path).Equals(
@@ -103,15 +108,18 @@ public sealed class EmbeddedMediaVaultIndex
             .Where(path => IsCorrespondingFile(
                 path,
                 markdownStem,
-                markdownFileName))
+                markdownFileName,
+                _pathComparer))
             // Prefer note.ext before note.md.ext, then make the remaining order
             // deterministic across platforms and directory enumeration order.
             .OrderBy(path => Path.GetFileNameWithoutExtension(path).Equals(
                 markdownStem,
-                StringComparison.OrdinalIgnoreCase)
+                _pathComparer.Equals(StringComparer.OrdinalIgnoreCase)
+                    ? StringComparison.OrdinalIgnoreCase
+                    : StringComparison.Ordinal)
                 ? 0
                 : 1)
-            .ThenBy(path => Path.GetFileName(path), StringComparer.OrdinalIgnoreCase)
+            .ThenBy(path => Path.GetFileName(path), _pathComparer)
             .Select(path => new EmbeddedMediaReference(
                 Path.GetFileName(path),
                 Path.GetFullPath(path),
@@ -130,11 +138,13 @@ public sealed class EmbeddedMediaVaultIndex
     private static bool IsCorrespondingFile(
         string candidatePath,
         string markdownStem,
-        string markdownFileName)
+        string markdownFileName,
+        StringComparer pathComparer)
     {
         var candidateStem = Path.GetFileNameWithoutExtension(candidatePath);
-        return candidateStem.Equals(markdownStem, StringComparison.OrdinalIgnoreCase)
-               || candidateStem.Equals(markdownFileName, StringComparison.OrdinalIgnoreCase);
+        // Related-document names are filesystem references, so they must not bind a different-cased sibling on sensitive volumes.
+        return pathComparer.Equals(candidateStem, markdownStem)
+               || pathComparer.Equals(candidateStem, markdownFileName);
     }
 
     private static EmbeddedMediaKind GetKind(string target)
@@ -172,7 +182,8 @@ public sealed class EmbeddedMediaVaultIndex
             target,
             markdownFilePath,
             _rootFolder,
-            _mediaPaths);
+            _mediaPaths,
+            _pathComparer);
         // Preserve unresolved text for the viewer while the shared policy prevents external or ambiguous files loading.
         return resolution.ResolvedPath ?? target;
     }

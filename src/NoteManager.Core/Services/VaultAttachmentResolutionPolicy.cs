@@ -27,7 +27,8 @@ public static class VaultAttachmentResolutionPolicy
         string literalTarget,
         string markdownFilePath,
         string vaultRoot,
-        IEnumerable<string> vaultFilePaths)
+        IEnumerable<string> vaultFilePaths,
+        StringComparer? pathComparer = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(literalTarget);
         ArgumentException.ThrowIfNullOrWhiteSpace(markdownFilePath);
@@ -36,6 +37,8 @@ public static class VaultAttachmentResolutionPolicy
 
         var target = literalTarget.Trim();
         var rootPath = Path.GetFullPath(vaultRoot);
+        // Candidate paths represent files, unlike Markdown text, so resolve them with the vault volume's identity rules.
+        var vaultPathComparer = pathComparer ?? FileSystemPathIdentity.GetComparer(rootPath);
         var notePath = Path.GetFullPath(markdownFilePath);
         var noteFolder = Path.GetDirectoryName(notePath)!;
         var windowsTarget = target.Replace('/', Path.DirectorySeparatorChar);
@@ -84,9 +87,11 @@ public static class VaultAttachmentResolutionPolicy
             .Where(path => IsPathInsideRoot(path, rootPath))
             .Where(path => Path.GetFileName(path).Equals(
                 Path.GetFileName(windowsTarget),
-                StringComparison.OrdinalIgnoreCase))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+                vaultPathComparer.Equals(StringComparer.OrdinalIgnoreCase)
+                    ? StringComparison.OrdinalIgnoreCase
+                    : StringComparison.Ordinal))
+            .Distinct(vaultPathComparer)
+            .OrderBy(path => path, vaultPathComparer)
             .ToArray();
 
         return matches.Length switch

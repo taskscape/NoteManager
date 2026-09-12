@@ -28,6 +28,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private CancellationTokenSource? _publishCancellation;
     private CancellationTokenSource? _searchCancellation;
     private Dictionary<string, NoteSearchHit>? _fullTextHits;
+    // Tracks the active vault's actual path identity so case-distinct notes remain separate in UI state.
+    private StringComparer _vaultPathComparer = StringComparer.Ordinal;
     private NoteSearchMode? _activeSearchMode;
     private string _searchText = string.Empty;
     private NoteItem? _selectedNote;
@@ -888,15 +890,15 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         note = null!;
         if (!IsFolderMode
             || string.IsNullOrWhiteSpace(CurrentFolderPath)
-            || !CurrentFolderPath.Equals(target.VaultPath, StringComparison.OrdinalIgnoreCase))
+            || !_vaultPathComparer.Equals(CurrentFolderPath, target.VaultPath))
         {
             SetStatus($"{operationName} cancelled because the notes folder changed while the dialog was open.");
             return false;
         }
 
-        note = _allNotes.FirstOrDefault(candidate => candidate.SourceFilePath.Equals(
-            target.SourceFilePath,
-            StringComparison.OrdinalIgnoreCase))!;
+        note = _allNotes.FirstOrDefault(candidate => _vaultPathComparer.Equals(
+            candidate.SourceFilePath,
+            target.SourceFilePath))!;
         if (note is null || !File.Exists(note.SourceFilePath))
         {
             // A refresh may replace NoteItem instances, so path identity—not the stale object reference—proves the target remains.
@@ -914,7 +916,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private bool CanApplyDeletionToOriginalVault(NoteDeletionOperation operation)
         => _deletingNotes.Contains(operation.Note)
            && IsFolderMode
-           && CurrentFolderPath.Equals(operation.FolderPath, StringComparison.OrdinalIgnoreCase)
+           && _vaultPathComparer.Equals(CurrentFolderPath, operation.FolderPath)
            // A reload may have already removed this instance while the worker was running.
            && _allNotes.Contains(operation.Note);
 
@@ -1136,7 +1138,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private bool IsCurrentVault(string folderPath, long vaultGeneration)
         => IsFolderMode
            && vaultGeneration == _vaultGeneration
-           && CurrentFolderPath.Equals(folderPath, StringComparison.OrdinalIgnoreCase);
+           && _vaultPathComparer.Equals(CurrentFolderPath, folderPath);
 
     /// <summary>
     /// Keeps an embed import attached to its original note while allowing
@@ -1413,7 +1415,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             var destinationPath = FindAvailableMarkdownPath(
                 sourceFolder,
                 fileName,
-                sourcePath);
+                sourcePath,
+                _vaultPathComparer);
             File.Move(sourcePath, destinationPath);
             note.UpdateFileIdentity(
                 Path.GetFileName(destinationPath),
@@ -1474,11 +1477,13 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private static string FindAvailableMarkdownPath(
         string folderPath,
         string requestedFileName,
-        string sourcePath)
+        string sourcePath,
+        StringComparer pathComparer)
     {
         var requestedPath = Path.GetFullPath(
             Path.Combine(folderPath, requestedFileName));
-        if (requestedPath.Equals(sourcePath, StringComparison.OrdinalIgnoreCase)
+        // A case-only rename is available only when the vault treats its two spellings as one path.
+        if (pathComparer.Equals(requestedPath, sourcePath)
             || !File.Exists(requestedPath))
         {
             return requestedPath;
@@ -1513,7 +1518,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         var conflict = PendingSaveConflict;
         if (note is null
             || conflict is null
-            || !conflict.SourceFilePath.Equals(note.SourceFilePath, StringComparison.OrdinalIgnoreCase))
+            // Save-conflict resolution must not authorize a different case-distinct note.
+            || !_vaultPathComparer.Equals(conflict.SourceFilePath, note.SourceFilePath))
         {
             return false;
         }
@@ -1602,7 +1608,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
         var conflict = PendingSaveConflict;
         var hasMatchingConflict = conflict is not null
-            && conflict.SourceFilePath.Equals(note.SourceFilePath, StringComparison.OrdinalIgnoreCase);
+            // A conflict belongs to exactly one filesystem identity within the vault.
+            && _vaultPathComparer.Equals(conflict.SourceFilePath, note.SourceFilePath);
         if (hasMatchingConflict && !allowConflictOverwrite)
         {
             SetStatus($"Save conflict for {note.FileName} is unresolved; your draft is preserved.");
@@ -2003,9 +2010,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             _allNotes.ReplaceRange(result.Notes);
 
             var nextFolderPath = Path.GetFullPath(folderPath);
+            // Determine identity once for this completed vault transition and reuse it throughout the UI.
+            var nextVaultPathComparer = FileSystemPathIdentity.GetComparer(nextFolderPath);
             var vaultChanged = !IsFolderMode
-                || !CurrentFolderPath.Equals(nextFolderPath, StringComparison.OrdinalIgnoreCase);
+                || !nextVaultPathComparer.Equals(CurrentFolderPath, nextFolderPath);
             CurrentFolderPath = nextFolderPath;
+            _vaultPathComparer = nextVaultPathComparer;
             IsFolderMode = true;
             if (vaultChanged)
             {
@@ -2033,9 +2043,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             SelectedNote = selectedFilePath is null
                 ? NotesView.FirstOrDefault()
                 : NotesView
-                    .FirstOrDefault(note => note.SourceFilePath.Equals(
-                        selectedFilePath,
-                        StringComparison.OrdinalIgnoreCase))
+                    .FirstOrDefault(note => _vaultPathComparer.Equals(
+                        note.SourceFilePath,
+                        selectedFilePath))
                   ?? NotesView.FirstOrDefault();
             OnPropertyChanged(nameof(VisibleNoteCount));
 
@@ -2088,7 +2098,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             cancellationToken.ThrowIfCancellationRequested();
             if (!IsFolderMode
                 || vaultGeneration != _vaultGeneration
-                || !CurrentFolderPath.Equals(folderPath, StringComparison.OrdinalIgnoreCase))
+                || !_vaultPathComparer.Equals(CurrentFolderPath, folderPath))
             {
                 return;
             }
@@ -2098,7 +2108,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             var selectedFilterKey = SelectedNavigationItem?.FilterKey ?? AllNotesFilterKey;
             var dirtyNotes = _allNotes
                 .Where(note => note.IsDirty)
-                .ToDictionary(note => note.SourceFilePath, StringComparer.OrdinalIgnoreCase);
+                // Dirty-draft preservation must keep separate notes whose names differ only by case.
+                .ToDictionary(note => note.SourceFilePath, _vaultPathComparer);
 
             // Keep unsaved editor instances instead of replacing their in-memory drafts with disk content.
             var refreshedNotes = result.Notes
@@ -2108,9 +2119,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 .ToList();
             foreach (var dirtyNote in dirtyNotes.Values)
             {
-                if (!refreshedNotes.Any(note => note.SourceFilePath.Equals(
-                        dirtyNote.SourceFilePath,
-                        StringComparison.OrdinalIgnoreCase)))
+                if (!refreshedNotes.Any(note => _vaultPathComparer.Equals(
+                        note.SourceFilePath,
+                        dirtyNote.SourceFilePath)))
                 {
                     refreshedNotes.Add(dirtyNote);
                 }
@@ -2127,9 +2138,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
             var restoredSelection = selectedPath is null
                 ? null
-                : _allNotes.FirstOrDefault(note => note.SourceFilePath.Equals(
-                    selectedPath,
-                    StringComparison.OrdinalIgnoreCase));
+                : _allNotes.FirstOrDefault(note => _vaultPathComparer.Equals(
+                    note.SourceFilePath,
+                    selectedPath));
             if (restoredSelection is not null)
             {
                 SelectedNote = restoredSelection;
@@ -2347,7 +2358,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
                 _fullTextHits = result.Hits.ToDictionary(
                     hit => hit.Path,
-                    StringComparer.OrdinalIgnoreCase);
+                    // Hit keys must use the same volume identity used when notes were loaded.
+                    _vaultPathComparer);
                 SetActiveSearchMode(result.Mode);
                 RefreshNoteFilter();
                 SetStatus(

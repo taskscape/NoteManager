@@ -300,12 +300,14 @@ public sealed partial class InfostackerPublishingService
     {
         // Sharing enumerates the same vault snapshot policy as the editor so bare filenames cannot diverge by surface.
         var vaultFilePaths = EnumerateVaultFiles(rootPath).ToArray();
+        // Publication attachment sets must retain the active vault's distinct filesystem paths.
+        var pathComparer = FileSystemPathIdentity.GetComparer(rootPath);
         var attachments = new List<PublicationAttachment>();
-        var resolvedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var originalPdfPaths = FindOriginalPdfPaths(notePath, rootPath).ToArray();
+        var resolvedPaths = new HashSet<string>(pathComparer);
+        var originalPdfPaths = FindOriginalPdfPaths(notePath, rootPath, pathComparer).ToArray();
         var originalPdfPathSet = new HashSet<string>(
             originalPdfPaths,
-            StringComparer.OrdinalIgnoreCase);
+            pathComparer);
 
         foreach (Match match in AttachmentEmbedRegex().Matches(source))
         {
@@ -323,7 +325,8 @@ public sealed partial class InfostackerPublishingService
                 target,
                 notePath,
                 rootPath,
-                vaultFilePaths);
+                vaultFilePaths,
+                pathComparer);
             var resolvedPath = resolution.ResolvedPath;
             if (resolvedPath is not null && resolvedPaths.Add(resolvedPath))
             {
@@ -369,7 +372,7 @@ public sealed partial class InfostackerPublishingService
 
         var markdown = originalEmbeds.Count == 0
             ? source
-            : $"{RemoveOriginalPdfEmbeds(source, notePath, rootPath, vaultFilePaths, originalPdfPathSet).TrimEnd()}\n\n{string.Join(Environment.NewLine, originalEmbeds)}";
+            : $"{RemoveOriginalPdfEmbeds(source, notePath, rootPath, vaultFilePaths, originalPdfPathSet, pathComparer).TrimEnd()}\n\n{string.Join(Environment.NewLine, originalEmbeds)}";
         return new PreparedPublication(markdown, attachments);
     }
 
@@ -378,7 +381,8 @@ public sealed partial class InfostackerPublishingService
         string notePath,
         string rootPath,
         IEnumerable<string> vaultFilePaths,
-        HashSet<string> originalPdfPaths)
+        HashSet<string> originalPdfPaths,
+        StringComparer pathComparer)
     {
         return AttachmentEmbedRegex().Replace(source, match =>
         {
@@ -389,7 +393,8 @@ public sealed partial class InfostackerPublishingService
                     target,
                     notePath,
                     rootPath,
-                    vaultFilePaths).ResolvedPath;
+                    vaultFilePaths,
+                    pathComparer).ResolvedPath;
             return resolvedPath is not null && originalPdfPaths.Contains(resolvedPath)
                 ? string.Empty
                 : match.Value;
@@ -427,7 +432,10 @@ public sealed partial class InfostackerPublishingService
             });
     }
 
-    private static IEnumerable<string> FindOriginalPdfPaths(string notePath, string rootPath)
+    private static IEnumerable<string> FindOriginalPdfPaths(
+        string notePath,
+        string rootPath,
+        StringComparer pathComparer)
     {
         var candidates = new[]
         {
@@ -438,7 +446,8 @@ public sealed partial class InfostackerPublishingService
         return candidates
             .Select(Path.GetFullPath)
             .Where(path => IsPathInsideRoot(path, rootPath) && File.Exists(path))
-            .Distinct(StringComparer.OrdinalIgnoreCase);
+            // Case-distinct PDF companions are separate shareable attachments on sensitive volumes.
+            .Distinct(pathComparer);
     }
 
     private static bool IsPathInsideRoot(string path, string rootPath)

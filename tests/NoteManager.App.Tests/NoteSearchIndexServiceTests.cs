@@ -288,6 +288,53 @@ public sealed class NoteSearchIndexServiceTests
     }
 
     [Fact]
+    public void UpdateIndex_CaseDistinctNotesRemainIndependentOnCaseSensitiveVolumes()
+    {
+        using var folder = new SearchTestFolder();
+        // This regression is meaningful only when the test volume permits two case-distinct paths.
+        if (!SupportsCaseDistinctPaths(folder.Path))
+        {
+            return;
+        }
+
+        const string upperRelativePath = "A/Note.md";
+        const string lowerRelativePath = "a/note.md";
+        folder.WriteNote(upperRelativePath, "alpha only", modifiedDaysAgo: 1);
+        folder.WriteNote(lowerRelativePath, "beta only", modifiedDaysAgo: 1);
+        folder.UpdateIndex();
+
+        Assert.Equal(
+            [upperRelativePath],
+            SearchPaths(folder.Path, "alpha only"));
+        Assert.Equal(
+            [lowerRelativePath],
+            SearchPaths(folder.Path, "beta only"));
+
+        // Editing the lower-case note must not replace or reclassify its upper-case sibling.
+        folder.WriteNote(lowerRelativePath, "beta revised", modifiedDaysAgo: 0);
+        folder.UpdateIndex();
+        Assert.Empty(SearchPaths(folder.Path, "beta only"));
+        Assert.Equal([upperRelativePath], SearchPaths(folder.Path, "alpha only"));
+
+        const string renamedUpperRelativePath = "A/Renamed.md";
+        File.Move(
+            Path.Combine(folder.Path, upperRelativePath),
+            Path.Combine(folder.Path, renamedUpperRelativePath));
+        folder.UpdateIndex();
+        Assert.Equal(
+            [renamedUpperRelativePath],
+            SearchPaths(folder.Path, "alpha only"));
+
+        // Deleting one case-distinct path must leave the independently indexed sibling searchable.
+        File.Delete(Path.Combine(folder.Path, lowerRelativePath));
+        folder.UpdateIndex();
+        Assert.Empty(SearchPaths(folder.Path, "beta revised"));
+        Assert.Equal(
+            [renamedUpperRelativePath],
+            SearchPaths(folder.Path, "alpha only"));
+    }
+
+    [Fact]
     public void UpdateIndex_RebuildsAnOlderDisposableSchema()
     {
         using var folder = new SearchTestFolder();
@@ -333,9 +380,53 @@ public sealed class NoteSearchIndexServiceTests
         verification.Open();
         using var versionCommand = verification.CreateCommand();
         versionCommand.CommandText = "PRAGMA user_version;";
+        using var schemaCommand = verification.CreateCommand();
+        schemaCommand.CommandText =
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'indexed_notes';";
 
-        Assert.Equal(2L, (long)(versionCommand.ExecuteScalar() ?? -1L));
+        // Schema version 3 stores a volume-aware primary-key collation for paths.
+        Assert.Equal(3L, (long)(versionCommand.ExecuteScalar() ?? -1L));
+        // The rebuilt index must persist the same identity semantics detected for this test volume.
+        Assert.Contains(
+            FileSystemPathIdentity.GetComparer(folder.Path).Equals(StringComparer.OrdinalIgnoreCase)
+                ? "COLLATE NOCASE"
+                : "COLLATE BINARY",
+            (string)(schemaCommand.ExecuteScalar() ?? string.Empty),
+            StringComparison.OrdinalIgnoreCase);
         Assert.Equal(["Migrated.md"], result.Hits.Select(hit => hit.Name));
+    }
+
+    private static string[] SearchPaths(string folderPath, string query)
+        => NoteSearchIndexService.Search(
+                folderPath,
+                query,
+                maxResults: 100,
+                CancellationToken.None)
+            .Hits
+            .Select(hit => hit.RelativePath)
+            .ToArray();
+
+    private static bool SupportsCaseDistinctPaths(string folderPath)
+    {
+        var probeName = $"case-probe-{Guid.NewGuid():N}";
+        var upperPath = Path.Combine(folderPath, probeName.ToUpperInvariant());
+        var lowerPath = Path.Combine(folderPath, probeName.ToLowerInvariant());
+        try
+        {
+            File.WriteAllText(upperPath, "upper");
+            File.WriteAllText(lowerPath, "lower");
+            // Two directory entries prove both case-distinct files can coexist on this exact test volume.
+            return Directory.EnumerateFiles(folderPath)
+                .Count(path => Path.GetFileName(path).Equals(probeName, StringComparison.OrdinalIgnoreCase)) == 2;
+        }
+        finally
+        {
+            File.Delete(upperPath);
+            if (!upperPath.Equals(lowerPath, StringComparison.Ordinal))
+            {
+                File.Delete(lowerPath);
+            }
+        }
     }
 
     private sealed class CancelAfterFirstBatchProgress(

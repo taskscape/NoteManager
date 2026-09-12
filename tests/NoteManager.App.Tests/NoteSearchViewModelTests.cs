@@ -156,6 +156,70 @@ public sealed class NoteSearchViewModelTests
         }
     }
 
+    [Fact]
+    public async Task SearchResults_KeepCaseDistinctNotesSeparateOnCaseSensitiveVolumes()
+    {
+        var folderPath = Directory.CreateDirectory(
+            Path.Combine(
+                Path.GetTempPath(),
+                $"NoteManager.CaseDistinctSearchTests.{Guid.NewGuid():N}")).FullName;
+        try
+        {
+            // The current Windows runner cannot create this fixture, but Linux and case-sensitive macOS volumes can.
+            if (!SupportsCaseDistinctPaths(folderPath))
+            {
+                return;
+            }
+
+            File.WriteAllText(Path.Combine(folderPath, "A.md"), "alpha only");
+            File.WriteAllText(Path.Combine(folderPath, "a.md"), "beta only");
+            using var viewModel = new MainViewModel();
+
+            await viewModel.LoadMarkdownFolderAsync(folderPath);
+            await WaitForIndexAsync(viewModel);
+            viewModel.SearchText = "alpha only";
+            await WaitForSearchAsync(viewModel);
+
+            // View-model hit filtering must not map A.md's hit onto the case-distinct a.md note.
+            Assert.Equal(["A.md"], viewModel.NotesView.Select(note => note.FileName));
+
+            viewModel.SearchText = "beta only";
+            await WaitForSearchAsync(viewModel);
+            Assert.Equal(["a.md"], viewModel.NotesView.Select(note => note.FileName));
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(folderPath))
+            {
+                Directory.Delete(folderPath, recursive: true);
+            }
+        }
+    }
+
+    private static bool SupportsCaseDistinctPaths(string folderPath)
+    {
+        var probeName = $"case-probe-{Guid.NewGuid():N}";
+        var upperPath = Path.Combine(folderPath, probeName.ToUpperInvariant());
+        var lowerPath = Path.Combine(folderPath, probeName.ToLowerInvariant());
+        try
+        {
+            File.WriteAllText(upperPath, "upper");
+            File.WriteAllText(lowerPath, "lower");
+            // Two entries prove the test volume preserves the two identities independently.
+            return Directory.EnumerateFiles(folderPath)
+                .Count(path => Path.GetFileName(path).Equals(probeName, StringComparison.OrdinalIgnoreCase)) == 2;
+        }
+        finally
+        {
+            File.Delete(upperPath);
+            if (!upperPath.Equals(lowerPath, StringComparison.Ordinal))
+            {
+                File.Delete(lowerPath);
+            }
+        }
+    }
+
     private static async Task WaitForIndexAsync(MainViewModel viewModel)
     {
         var deadline = DateTime.UtcNow.AddSeconds(10);
