@@ -19,6 +19,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private readonly Func<string, string> _readMarkdownContent;
     // Injectable folder loader lets regression tests hold an open request at its await boundary.
     private readonly Func<string, MarkdownFolderLoadResult> _loadMarkdownFolder;
+    // Injectable deletion lets regression tests hold the worker after the file is removed.
+    private readonly Action<string> _deleteMarkdownFile;
     private CancellationTokenSource? _indexCancellation;
     private CancellationTokenSource? _mediaRefreshCancellation;
     private CancellationTokenSource? _publishCancellation;
@@ -46,6 +48,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private string _shareStatusText = string.Empty;
     private NoteSortType _selectedSortType = NoteSortType.Updated;
     private EmbeddedMediaVaultIndex? _mediaIndex;
+    // Tracks drafts whose authorized deletion is in flight so navigation cannot autosave them back to disk.
+    private readonly HashSet<NoteItem> _deletingNotes = [];
     private long _folderGeneration;
     // This generation belongs to open-folder requests, which can overlap before either request applies.
     private long _folderLoadGeneration;
@@ -62,7 +66,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             activityLog,
             useSampleDataForTesting: false,
             readMarkdownContent: File.ReadAllText,
-            loadMarkdownFolder: MarkdownFolderService.LoadFolder)
+            loadMarkdownFolder: MarkdownFolderService.LoadFolder,
+            deleteMarkdownFile: File.Delete)
     {
     }
 
@@ -76,7 +81,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             activityLog: null,
             useSampleDataForTesting: false,
             readMarkdownContent: readMarkdownContent,
-            loadMarkdownFolder: MarkdownFolderService.LoadFolder)
+            loadMarkdownFolder: MarkdownFolderService.LoadFolder,
+            deleteMarkdownFile: File.Delete)
     {
     }
 
@@ -90,7 +96,23 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             activityLog: null,
             useSampleDataForTesting: false,
             readMarkdownContent: File.ReadAllText,
-            loadMarkdownFolder: loadMarkdownFolder)
+            loadMarkdownFolder: loadMarkdownFolder,
+            deleteMarkdownFile: File.Delete)
+    {
+    }
+
+    /// <summary>
+    /// Provides tests with a controllable worker deletion boundary after the
+    /// file has been removed but before the UI continuation can run.
+    /// </summary>
+    internal MainViewModel(Action<string> deleteMarkdownFile)
+        : this(
+            infostackerPublishingService: null,
+            activityLog: null,
+            useSampleDataForTesting: false,
+            readMarkdownContent: File.ReadAllText,
+            loadMarkdownFolder: MarkdownFolderService.LoadFolder,
+            deleteMarkdownFile: deleteMarkdownFile)
     {
     }
 
@@ -99,7 +121,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         ApplicationActivityLog? activityLog,
         bool useSampleDataForTesting,
         Func<string, string> readMarkdownContent,
-        Func<string, MarkdownFolderLoadResult> loadMarkdownFolder)
+        Func<string, MarkdownFolderLoadResult> loadMarkdownFolder,
+        Action<string> deleteMarkdownFile)
     {
         _infostackerPublishingService =
             infostackerPublishingService ?? new InfostackerPublishingService();
@@ -109,6 +132,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             ?? throw new ArgumentNullException(nameof(readMarkdownContent));
         _loadMarkdownFolder = loadMarkdownFolder
             ?? throw new ArgumentNullException(nameof(loadMarkdownFolder));
+        _deleteMarkdownFile = deleteMarkdownFile
+            ?? throw new ArgumentNullException(nameof(deleteMarkdownFile));
         _allNotes = new RangeObservableCollection<NoteItem>();
         _visibleNotes = new RangeObservableCollection<NoteItem>();
         PublishAttachments = new ReadOnlyObservableCollection<PublicationAttachment>(
@@ -162,7 +187,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             useSampleDataForTesting: true,
             readMarkdownContent: File.ReadAllText,
             // Sample data uses the production loader if a test later opens a real folder.
-            loadMarkdownFolder: MarkdownFolderService.LoadFolder);
+            loadMarkdownFolder: MarkdownFolderService.LoadFolder,
+            deleteMarkdownFile: File.Delete);
 
     public ObservableCollection<NavigationItem> NavigationItems { get; }
     public ObservableCollection<NoteItem> NotesView => _visibleNotes;
@@ -463,6 +489,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public bool CanDeleteSelectedNote
         => CanCreateNote
            && SelectedNote is not null
+           // Keep the authorized deletion exclusive to its original note until the worker completes.
+           && !IsNoteDeleting(SelectedNote)
            && IsMarkdownPathInCurrentFolder(SelectedNote.SourceFilePath);
 
     // Content writes require a verified disk revision; metadata selection alone is insufficient.
@@ -723,13 +751,21 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         var folderPath = CurrentFolderPath;
         var filePath = Path.GetFullPath(note.SourceFilePath);
         var fileName = Path.GetFileName(filePath);
+        var operation = new NoteDeletionOperation(note, folderPath);
+        // Mark before starting worker I/O so any intervening navigation preserves this exact draft.
+        _deletingNotes.Add(note);
+        RefreshFileCommandState();
 
         try
         {
-            await Task.Run(() => File.Delete(filePath));
-            note.MarkSaved();
-            await LoadMarkdownFolderAsync(folderPath);
-            SetStatus($"Deleted {fileName}");
+            await Task.Run(() => _deleteMarkdownFile(filePath));
+            if (CanApplyDeletionToOriginalVault(operation))
+            {
+                // Remove only the operation's note, avoiding a late folder reload that can replace another vault.
+                RemoveDeletedNoteFromCurrentVault(operation);
+                SetStatus($"Deleted {fileName}");
+            }
+
             return true;
         }
         catch (Exception exception) when (
@@ -737,10 +773,65 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             or UnauthorizedAccessException
             or NotSupportedException)
         {
-            SetStatus($"Could not delete note: {exception.Message}");
+            if (CanApplyDeletionToOriginalVault(operation))
+            {
+                // The note stays dirty and in the collection so its unsaved draft remains recoverable.
+                SetStatus($"Could not delete note: {exception.Message}");
+            }
+
             return false;
         }
+        finally
+        {
+            // Re-enable normal save behavior only after the deletion outcome is known.
+            _deletingNotes.Remove(note);
+            RefreshFileCommandState();
+        }
     }
+
+    /// <summary>
+    /// Applies a completed deletion only while the initiating vault is still
+    /// active; a user who opened another vault must not have it replaced.
+    /// </summary>
+    private bool CanApplyDeletionToOriginalVault(NoteDeletionOperation operation)
+        => _deletingNotes.Contains(operation.Note)
+           && IsFolderMode
+           && CurrentFolderPath.Equals(operation.FolderPath, StringComparison.OrdinalIgnoreCase)
+           // A reload may have already removed this instance while the worker was running.
+           && _allNotes.Contains(operation.Note);
+
+    /// <summary>
+    /// Removes the deleted note from the owning collection without saving its
+    /// draft or changing the selection in a different vault.
+    /// </summary>
+    private void RemoveDeletedNoteFromCurrentVault(NoteDeletionOperation operation)
+    {
+        _allNotes.Remove(operation.Note);
+        var selectedFilterKey = SelectedNavigationItem?.FilterKey ?? AllNotesFilterKey;
+        RebuildTagNavigation();
+        // Preserve the current filter when it still exists, otherwise return to a valid vault-wide filter.
+        SetSelectedNavigationItemAfterRefresh(
+            NavigationItems.FirstOrDefault(item => item.FilterKey.Equals(
+                selectedFilterKey,
+                StringComparison.OrdinalIgnoreCase))
+            ?? NavigationItems.FirstOrDefault(item => item.FilterKey == AllNotesFilterKey));
+        RefreshNoteFilter();
+        if (ReferenceEquals(SelectedNote, operation.Note))
+        {
+            // The deletion state intentionally makes this selection change skip autosave.
+            SelectedNote = null;
+            EnsureSelectedNote();
+        }
+
+        OnPropertyChanged(nameof(VisibleNoteCount));
+        // Deletion changes the vault contents, so refresh the index only for the still-active original vault.
+        StartBackgroundIndex(operation.FolderPath);
+    }
+
+    // Carries the identity and vault captured at authorization so an old worker cannot update a later vault.
+    private sealed record NoteDeletionOperation(
+        NoteItem Note,
+        string FolderPath);
 
     public bool CanImportPdfIntoNote(NoteItem? note)
         => note is { IsMarkdownFile: true }
@@ -1294,6 +1385,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         bool allowConflictOverwrite)
     {
         var note = SelectedNote;
+        if (IsNoteDeleting(note))
+        {
+            // An authorized deletion owns this dirty draft until it either succeeds or fails.
+            return true;
+        }
+
         if (note is not { IsMarkdownFile: true, IsDirty: true })
         {
             return true;
@@ -1569,6 +1666,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                    $"..{Path.DirectorySeparatorChar}",
                    StringComparison.Ordinal);
     }
+
+    // Reference identity keeps suppression scoped to the exact NoteItem captured by deletion authorization.
+    private bool IsNoteDeleting(NoteItem? note)
+        => note is not null && _deletingNotes.Contains(note);
 
     private void RefreshFileCommandState()
     {
