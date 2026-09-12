@@ -433,6 +433,27 @@
                     </StackPanel>
                   </StackPanel>
                 </Border>
+                <!-- A separate panel keeps disk-read diagnostics out of the editable Markdown binding. -->
+                <Border Margin="0,0,0,10"
+                        Padding="12"
+                        Background="{DynamicResource SelectionSurfaceBrush}"
+                        BorderBrush="{DynamicResource StrongBorderBrush}"
+                        BorderThickness="1"
+                        CornerRadius="6"
+                        IsVisible="{Binding SelectedNote.IsContentUnavailable}">
+                  <StackPanel Spacing="7">
+                    <TextBlock FontWeight="SemiBold"
+                               Text="This note could not be read" />
+                    <TextBlock Classes="secondary"
+                               Text="{Binding SelectedNote.ContentLoadError}"
+                               TextWrapping="Wrap" />
+                    <Button HorizontalAlignment="Right"
+                            Classes="editorAction"
+                            Command="{Binding RetryLoadSelectedNoteCommand}">
+                      <TextBlock Text="Retry reading note" />
+                    </Button>
+                  </StackPanel>
+                </Border>
                 <Border Classes="surface"
                         Padding="8,6">
                   <StackPanel>
@@ -459,6 +480,7 @@
                              FontFamily="avares://Avalonia.Fonts.Inter/Assets#Inter"
                              FontSize="14"
                              LineHeight="23"
+                             IsEnabled="{Binding CanEditSelectedNote}"
                              TextWrapping="Wrap"
                              VerticalContentAlignment="Top"
                              Text="{Binding SelectedNote.PlainTextContent, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
@@ -466,7 +488,7 @@
                             HorizontalAlignment="Right"
                             Classes="editorAction"
                             Click="ImportPdf_OnClick"
-                            IsEnabled="{Binding CanDeleteSelectedNote}"
+                            IsEnabled="{Binding CanEditSelectedNote}"
                             ToolTip.Tip="Insert PDF references into this note">
                       <StackPanel Orientation="Horizontal" Spacing="6">
                         <icons:FluentIcon Icon="DocumentPdf"

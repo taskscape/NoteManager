@@ -115,8 +115,8 @@ public static class MarkdownFolderService
             GeneratedFilePath = file.FullName,
             IsMarkdownFile = true,
             SourceFilePath = file.FullName,
+            // Markdown is intentionally lazy-loaded so read failures can remain recoverable state.
             PlainTextContent = string.Empty,
-            IsContentLoaded = false,
             EmbeddedMediaReferences = mediaReferences
         };
     }

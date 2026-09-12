@@ -15,6 +15,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private readonly ObservableCollection<PublicationAttachment> _publishAttachments = [];
     private readonly InfostackerPublishingService _infostackerPublishingService;
     private readonly ApplicationActivityLog _activityLog;
+    // Injectable reader makes transient file-access recovery deterministic in regression tests.
+    private readonly Func<string, string> _readMarkdownContent;
     private CancellationTokenSource? _indexCancellation;
     private CancellationTokenSource? _mediaRefreshCancellation;
     private CancellationTokenSource? _publishCancellation;
@@ -54,19 +56,36 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         : this(
             infostackerPublishingService,
             activityLog,
-            useSampleDataForTesting: false)
+            useSampleDataForTesting: false,
+            readMarkdownContent: File.ReadAllText)
+    {
+    }
+
+    /// <summary>
+    /// Provides tests with deterministic read failures while production keeps
+    /// using <see cref="File.ReadAllText(string)"/> for Markdown content.
+    /// </summary>
+    internal MainViewModel(Func<string, string> readMarkdownContent)
+        : this(
+            infostackerPublishingService: null,
+            activityLog: null,
+            useSampleDataForTesting: false,
+            readMarkdownContent: readMarkdownContent)
     {
     }
 
     private MainViewModel(
         InfostackerPublishingService? infostackerPublishingService,
         ApplicationActivityLog? activityLog,
-        bool useSampleDataForTesting)
+        bool useSampleDataForTesting,
+        Func<string, string> readMarkdownContent)
     {
         _infostackerPublishingService =
             infostackerPublishingService ?? new InfostackerPublishingService();
         // Share failures are recoverable, but still need the application log's full exception details.
         _activityLog = activityLog ?? new ApplicationActivityLog();
+        _readMarkdownContent = readMarkdownContent
+            ?? throw new ArgumentNullException(nameof(readMarkdownContent));
         _allNotes = new RangeObservableCollection<NoteItem>();
         _visibleNotes = new RangeObservableCollection<NoteItem>();
         PublishAttachments = new ReadOnlyObservableCollection<PublicationAttachment>(
@@ -78,6 +97,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         SyncCommand = new RelayCommand(_ => Sync());
         ShareCommand = new RelayCommand(_ => ToggleSharePanel());
         CloseShareCommand = new RelayCommand(_ => IsSharePanelOpen = false);
+        RetryLoadSelectedNoteCommand = new RelayCommand(
+            _ => RetryLoadSelectedNote(),
+            _ => CanRetryLoadSelectedNote);
         OpenAttachmentCommand = new RelayCommand(_ => OpenAttachment(), _ => SelectedNote is not null);
         SortNotesCommand = new RelayCommand(
             parameter =>
@@ -111,7 +133,11 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public static MainViewModel CreateWithSampleDataForTesting(
         InfostackerPublishingService? infostackerPublishingService = null,
         ApplicationActivityLog? activityLog = null)
-        => new(infostackerPublishingService, activityLog, useSampleDataForTesting: true);
+        => new(
+            infostackerPublishingService,
+            activityLog,
+            useSampleDataForTesting: true,
+            readMarkdownContent: File.ReadAllText);
 
     public ObservableCollection<NavigationItem> NavigationItems { get; }
     public ObservableCollection<NoteItem> NotesView => _visibleNotes;
@@ -122,6 +148,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public RelayCommand SyncCommand { get; }
     public RelayCommand ShareCommand { get; }
     public RelayCommand CloseShareCommand { get; }
+    public RelayCommand RetryLoadSelectedNoteCommand { get; }
     public RelayCommand OpenAttachmentCommand { get; }
     public RelayCommand SortNotesCommand { get; }
     public RelayCommand ViewModeCommand { get; }
@@ -204,17 +231,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
             if (value is { IsMarkdownFile: true, IsContentLoaded: false })
             {
-                try
-                {
-                    value.LoadPlainTextContent(
-                        File.ReadAllText(value.SourceFilePath));
-                }
-                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-                {
-                    value.LoadPlainTextContent(
-                        $"The Markdown file could not be read.{Environment.NewLine}{exception.Message}",
-                        captureFileRevision: false);
-                }
+                TryLoadMarkdownContent(value);
             }
 
             var previousNote = _selectedNote;
@@ -223,8 +240,11 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 DetachSelectedNote(previousNote);
                 AttachSelectedNote(value);
                 OnPropertyChanged(nameof(CanDeleteSelectedNote));
+                OnPropertyChanged(nameof(CanEditSelectedNote));
                 OnPropertyChanged(nameof(CanPublishSelectedNote));
                 OnPropertyChanged(nameof(CanAssignTags));
+                OnPropertyChanged(nameof(CanRetryLoadSelectedNote));
+                RetryLoadSelectedNoteCommand.RaiseCanExecuteChanged();
                 OpenAttachmentCommand.RaiseCanExecuteChanged();
             }
         }
@@ -420,11 +440,33 @@ public sealed class MainViewModel : ObservableObject, IDisposable
            && SelectedNote is not null
            && IsMarkdownPathInCurrentFolder(SelectedNote.SourceFilePath);
 
+    // Content writes require a verified disk revision; metadata selection alone is insufficient.
+    public bool CanEditSelectedNote
+        => CanDeleteSelectedNote && SelectedNote is { IsContentLoaded: true };
+
     public bool CanPublishSelectedNote
-        => CanDeleteSelectedNote && !IsPublishing;
+        => CanEditSelectedNote && !IsPublishing;
 
     public bool CanAssignTags
-        => CanDeleteSelectedNote;
+        => CanEditSelectedNote;
+
+    public bool CanRetryLoadSelectedNote
+        => SelectedNote is { IsMarkdownFile: true, IsContentUnavailable: true };
+
+    /// <summary>
+    /// Attempts a fresh disk read after a recoverable load failure without
+    /// treating the error diagnostic as document content.
+    /// </summary>
+    public bool RetryLoadSelectedNote()
+    {
+        var note = SelectedNote;
+        if (note is null || !CanRetryLoadSelectedNote)
+        {
+            return false;
+        }
+
+        return TryLoadMarkdownContent(note);
+    }
 
     public TagAssignmentContext? CreateTagAssignmentContext()
     {
@@ -674,6 +716,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     public bool CanImportPdfIntoNote(NoteItem? note)
         => note is { IsMarkdownFile: true }
+           && note.IsContentLoaded
            && IsFolderMode
            && IsMarkdownPathInCurrentFolder(note.SourceFilePath);
 
@@ -1228,6 +1271,13 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             return true;
         }
 
+        if (!note.IsContentLoaded)
+        {
+            // Guard programmatic callers as well as the disabled editor controls.
+            SetStatus($"{note.FileName} must be read successfully before it can be saved.");
+            return false;
+        }
+
         if (!IsMarkdownPathInCurrentFolder(note.SourceFilePath))
         {
             SetStatus("The current note cannot be saved outside the selected folder");
@@ -1496,8 +1546,11 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     {
         OnPropertyChanged(nameof(CanCreateNote));
         OnPropertyChanged(nameof(CanDeleteSelectedNote));
+        OnPropertyChanged(nameof(CanEditSelectedNote));
         OnPropertyChanged(nameof(CanPublishSelectedNote));
         OnPropertyChanged(nameof(CanAssignTags));
+        OnPropertyChanged(nameof(CanRetryLoadSelectedNote));
+        RetryLoadSelectedNoteCommand.RaiseCanExecuteChanged();
         NewNoteCommand.RaiseCanExecuteChanged();
     }
 
@@ -2074,11 +2127,47 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         object? sender,
         PropertyChangedEventArgs e)
     {
+        if (sender is NoteItem availabilityNote
+            && ReferenceEquals(availabilityNote, SelectedNote)
+            && e.PropertyName is nameof(NoteItem.IsContentLoaded)
+                or nameof(NoteItem.IsContentUnavailable))
+        {
+            // A read retry changes every content-mutating command's availability in-place.
+            OnPropertyChanged(nameof(CanEditSelectedNote));
+            OnPropertyChanged(nameof(CanPublishSelectedNote));
+            OnPropertyChanged(nameof(CanAssignTags));
+            OnPropertyChanged(nameof(CanRetryLoadSelectedNote));
+            RetryLoadSelectedNoteCommand.RaiseCanExecuteChanged();
+        }
+
         if (e.PropertyName == nameof(NoteItem.PlainTextContent)
             && sender is NoteItem note
             && ReferenceEquals(note, SelectedNote))
         {
             QueueEmbeddedMediaRefresh(note);
+        }
+    }
+
+    /// <summary>
+    /// Reads Markdown into the editor only on success; I/O diagnostics remain
+    /// in the note's unavailable state so retry can safely read the real file.
+    /// </summary>
+    private bool TryLoadMarkdownContent(NoteItem note)
+    {
+        try
+        {
+            note.LoadPlainTextContent(_readMarkdownContent(note.SourceFilePath));
+            UpdateNoteMetadataFromDisk(note);
+            RefreshEmbeddedMediaReferences(note);
+            SetStatus($"Loaded {note.FileName}");
+            return true;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            note.MarkContentUnavailable(
+                $"The Markdown file could not be read.{Environment.NewLine}{exception.Message}");
+            SetStatus($"Could not read {note.FileName}. Retry after access is restored.");
+            return false;
         }
     }
 

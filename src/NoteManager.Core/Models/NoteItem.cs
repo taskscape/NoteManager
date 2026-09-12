@@ -30,6 +30,9 @@ public sealed class NoteItem : ObservableObject
     private string[] _tags = [];
     private DateTime _updatedAt;
     private long _sizeBytes;
+    // Read failures are state, not document text, so they can never be saved as Markdown.
+    private string? _contentLoadError;
+    private bool _isContentLoaded;
     private bool _isDirty;
     private FileRevision? _fileRevisionBaseline;
 
@@ -97,7 +100,37 @@ public sealed class NoteItem : ObservableObject
         }
     }
 
-    public bool IsContentLoaded { get; set; }
+    public bool IsContentLoaded
+    {
+        get => _isContentLoaded;
+        private set
+        {
+            if (SetProperty(ref _isContentLoaded, value))
+            {
+                OnPropertyChanged(nameof(IsContentUnavailable));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Holds a recoverable disk-read diagnostic separately from Markdown so a
+    /// failed read cannot become editable or persistable note content.
+    /// </summary>
+    public string? ContentLoadError
+    {
+        get => _contentLoadError;
+        private set
+        {
+            if (SetProperty(ref _contentLoadError, value))
+            {
+                OnPropertyChanged(nameof(IsContentUnavailable));
+            }
+        }
+    }
+
+    public bool IsContentUnavailable
+        => !IsContentLoaded && !string.IsNullOrWhiteSpace(ContentLoadError);
+
     public bool IsDirty
     {
         get => _isDirty;
@@ -116,12 +149,28 @@ public sealed class NoteItem : ObservableObject
             OnPropertyChanged(nameof(PlainTextContent));
         }
 
+        // A successful read is the only transition that clears the unavailable state.
+        ContentLoadError = null;
         IsContentLoaded = true;
         IsDirty = false;
         if (captureFileRevision)
         {
             CaptureFileRevisionBaseline(content);
         }
+    }
+
+    /// <summary>
+    /// Records a recoverable read failure without modifying the Markdown field
+    /// that is bound to the editor or marking a usable file revision as loaded.
+    /// </summary>
+    public void MarkContentUnavailable(string errorMessage)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(errorMessage);
+
+        IsContentLoaded = false;
+        ContentLoadError = errorMessage;
+        // Lazy-load placeholders must not trap navigation by appearing as an unsaved draft.
+        IsDirty = false;
     }
 
     /// <summary>
