@@ -58,7 +58,7 @@ public static class PdfDropImportService
         return new ImportedPdf(
             fullSourcePath,
             destinationPath,
-            EscapeEmbedTarget(relativePath),
+            ObsidianEmbedTarget.EscapeLiteralPath(relativePath),
             WasCopied: !isInsideVault);
     }
 
@@ -165,14 +165,6 @@ public static class PdfDropImportService
                    $"..{Path.DirectorySeparatorChar}",
                    StringComparison.Ordinal);
     }
-
-    private static string EscapeEmbedTarget(string relativePath)
-        => relativePath
-            .Replace("%", "%25", StringComparison.Ordinal)
-            .Replace("#", "%23", StringComparison.Ordinal)
-            .Replace("|", "%7C", StringComparison.Ordinal)
-            .Replace("[", "%5B", StringComparison.Ordinal)
-            .Replace("]", "%5D", StringComparison.Ordinal);
 
     private static string DetectNewLine(string markdown)
         => markdown.Contains("\r\n", StringComparison.Ordinal)

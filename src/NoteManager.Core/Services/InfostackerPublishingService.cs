@@ -307,7 +307,7 @@ public sealed partial class InfostackerPublishingService
 
         foreach (Match match in AttachmentEmbedRegex().Matches(source))
         {
-            var target = NormalizeAttachmentTarget(match.Groups["target"].Value);
+            var target = ObsidianEmbedTarget.GetLiteralPath(match.Groups["target"].Value);
             if (target.Length == 0)
             {
                 continue;
@@ -355,7 +355,7 @@ public sealed partial class InfostackerPublishingService
                     Issue: null));
             }
 
-            originalEmbeds.Add($"![[{EscapeEmbedTarget(Path.GetRelativePath(
+            originalEmbeds.Add($"![[{ObsidianEmbedTarget.EscapeLiteralPath(Path.GetRelativePath(
                 Path.GetDirectoryName(notePath)!,
                 originalPdfPath))}]]");
         }
@@ -374,7 +374,7 @@ public sealed partial class InfostackerPublishingService
     {
         return AttachmentEmbedRegex().Replace(source, match =>
         {
-            var target = NormalizeAttachmentTarget(match.Groups["target"].Value);
+            var target = ObsidianEmbedTarget.GetLiteralPath(match.Groups["target"].Value);
             var resolvedPath = target.Length == 0
                 ? null
                 : ResolveExplicitAttachment(target, notePath, rootPath);
@@ -451,36 +451,6 @@ public sealed partial class InfostackerPublishingService
             .Where(path => IsPathInsideRoot(path, rootPath) && File.Exists(path))
             .Distinct(StringComparer.OrdinalIgnoreCase);
     }
-
-    private static string NormalizeAttachmentTarget(string target)
-    {
-        var value = Uri.UnescapeDataString(target.Trim().Trim(
-            '<',
-            '>',
-            '"',
-            '\''));
-        var aliasIndex = value.IndexOf('|');
-        if (aliasIndex >= 0)
-        {
-            value = value[..aliasIndex];
-        }
-
-        var headingIndex = value.IndexOf('#');
-        if (headingIndex >= 0)
-        {
-            value = value[..headingIndex];
-        }
-
-        return value.Trim();
-    }
-
-    private static string EscapeEmbedTarget(string relativePath) => relativePath
-        .Replace(Path.DirectorySeparatorChar, '/')
-        .Replace("%", "%25", StringComparison.Ordinal)
-        .Replace("#", "%23", StringComparison.Ordinal)
-        .Replace("|", "%7C", StringComparison.Ordinal)
-        .Replace("[", "%5B", StringComparison.Ordinal)
-        .Replace("]", "%5D", StringComparison.Ordinal);
 
     private static bool IsPathInsideRoot(string path, string rootPath)
     {

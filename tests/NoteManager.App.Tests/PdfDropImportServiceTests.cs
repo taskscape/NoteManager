@@ -70,6 +70,50 @@ public sealed class PdfDropImportServiceTests
     }
 
     [Fact]
+    public void Import_ReservedFilename_EscapesLiteralCharactersForEmbed()
+    {
+        var testRoot = CreateTestRoot();
+        try
+        {
+            var vaultRoot = Directory.CreateDirectory(
+                Path.Combine(testRoot, "vault")).FullName;
+            var outsideRoot = Directory.CreateDirectory(
+                Path.Combine(testRoot, "outside")).FullName;
+            var pipeIsSupported = !Path.GetInvalidFileNameChars().Contains('|');
+            var fileName = pipeIsSupported
+                ? "report#[draft]%1|pipe.pdf"
+                : "report#[draft]%1.pdf";
+            var sourcePath = Path.Combine(outsideRoot, fileName);
+            File.WriteAllText(sourcePath, "report");
+
+            var imported = PdfDropImportService.Import(sourcePath, vaultRoot);
+
+            // The embed must preserve filename delimiters while leaving any platform-invalid delimiter out of the fixture.
+            Assert.Equal(
+                pipeIsSupported
+                    ? "![[report%23%5Bdraft%5D%251%7Cpipe.pdf]]"
+                    : "![[report%23%5Bdraft%5D%251.pdf]]",
+                imported.MarkdownEmbed);
+            Assert.True(File.Exists(imported.DestinationPath));
+        }
+        finally
+        {
+            Directory.Delete(testRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void GetLiteralPath_EncodedDelimitersWithFragmentAndAlias_PreservesTheFilename()
+    {
+        const string target = "report%23%5Bdraft%5D%251%7Cpipe.pdf#page=3|Reader copy";
+
+        var literalPath = ObsidianEmbedTarget.GetLiteralPath(target);
+
+        // Encoded delimiters are filename data, while only the later unescaped delimiters start Obsidian markup.
+        Assert.Equal("report#[draft]%1|pipe.pdf", literalPath);
+    }
+
+    [Fact]
     public void Import_ExternalPdfForNestedNote_UsesUnambiguousNoteRelativeEmbed()
     {
         var testRoot = CreateTestRoot();

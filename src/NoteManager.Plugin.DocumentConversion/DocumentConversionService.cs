@@ -428,20 +428,13 @@ public sealed class DocumentConversionService(
         var outputDirectory = Path.GetDirectoryName(document.OutputPath)!;
         var sourcePath = Path.GetRelativePath(outputDirectory, document.InputPath)
             .Replace(Path.DirectorySeparatorChar, '/');
-        var escapedSourcePath = EscapeEmbedTarget(sourcePath);
+        var escapedSourcePath = NoteManager.App.Services.ObsidianEmbedTarget.EscapeLiteralPath(sourcePath);
 
         // Keep the source PDF discoverable from generated Markdown as its durable conversion relationship.
         File.AppendAllText(
             stagedOutputPath,
             $"{Environment.NewLine}{Environment.NewLine}![[{escapedSourcePath}]]");
     }
-
-    private static string EscapeEmbedTarget(string relativePath) => relativePath
-        .Replace("%", "%25", StringComparison.Ordinal)
-        .Replace("#", "%23", StringComparison.Ordinal)
-        .Replace("|", "%7C", StringComparison.Ordinal)
-        .Replace("[", "%5B", StringComparison.Ordinal)
-        .Replace("]", "%5D", StringComparison.Ordinal);
 
     private static bool TryReadItemResult(
         string standardOutput,

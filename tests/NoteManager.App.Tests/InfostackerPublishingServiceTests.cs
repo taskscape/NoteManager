@@ -118,6 +118,36 @@ public sealed class InfostackerPublishingServiceTests
         Assert.Equal("Report.pdf", attachment.FileName);
     }
 
+    [Fact]
+    public async Task PublishAsync_EncodedPdfFilenameWithFragmentAndAlias_UploadsTheLiteralPdf()
+    {
+        using var vault = new TestVault();
+        const string pdfFileName = "report#[draft]%1.pdf";
+        const string pdfContents = "the exact PDF content";
+        var notePath = vault.Write(
+            "Report.md",
+            "![[report%23%5Bdraft%5D%251.pdf#page=3|Reader copy]]");
+        vault.Write(pdfFileName, pdfContents);
+        var handler = new CapturingHandler();
+        using var client = new HttpClient(handler);
+        var service = new InfostackerPublishingService(client, new Uri("https://example.test/"));
+
+        var attachments = service.PreviewAttachments(
+            CreateNote(notePath),
+            vault.Path,
+            File.ReadAllText(notePath));
+        await service.PublishAsync(CreateNote(notePath), vault.Path);
+
+        // Splitting markup before decode keeps the encoded # and brackets in the required PDF's filename.
+        var attachment = Assert.Single(attachments);
+        Assert.True(attachment.IsAvailable);
+        Assert.True(attachment.IsPdf);
+        Assert.Equal(pdfFileName, attachment.FileName);
+        var requestBody = Assert.IsType<string>(handler.RequestBody);
+        Assert.Contains(pdfFileName, requestBody);
+        Assert.Contains(pdfContents, requestBody);
+    }
+
     [Theory]
     [MemberData(nameof(InvalidPublishingResponses))]
     public async Task PublishAsync_InvalidPublishingResponse_ThrowsHandledPublishingException(string responseBody)
