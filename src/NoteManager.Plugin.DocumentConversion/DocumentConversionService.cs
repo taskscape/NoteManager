@@ -154,6 +154,17 @@ public sealed class DocumentConversionService(
                     continue;
                 }
 
+                if (IsPasswordProtectedPdf(document, item))
+                {
+                    skipped++;
+                    // DOC2MD keeps its source-side .ex diagnostic, so encryption remains visible without inflating errors.
+                    await LogAndReportAsync(
+                        context,
+                        $"Document conversion skipped for '{relativePath}': PDF is password protected; DOC2MD diagnostics were preserved.",
+                        CancellationToken.None);
+                    continue;
+                }
+
                 if (process.Succeeded
                     && item.Succeeded
                     && File.Exists(stagingOutput.OutputPath))
@@ -343,6 +354,21 @@ public sealed class DocumentConversionService(
         bytes.Length >= prefix.Length
         && bytes.AsSpan(0, prefix.Length).SequenceEqual(prefix);
 
+    private static bool IsPasswordProtectedPdf(
+        PendingDocument document,
+        CliItemResult item)
+    {
+        if (!Path.GetExtension(document.InputPath)
+            .Equals(".pdf", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        // DOC2MD emits this structured error for encrypted PDFs before it creates Markdown output.
+        return item.Error?.Contains("encrypted", StringComparison.OrdinalIgnoreCase) == true
+               && item.Error?.Contains("password", StringComparison.OrdinalIgnoreCase) == true;
+    }
+
     private static StagingOutput CreateStagingOutput(string outputPath)
     {
         var directory = Path.GetDirectoryName(Path.GetFullPath(outputPath))!;
@@ -421,7 +447,7 @@ public sealed class DocumentConversionService(
         string standardOutput,
         out CliItemResult result)
     {
-        result = new CliItemResult(false, false);
+        result = new CliItemResult(false, false, null);
         try
         {
             using var document = JsonDocument.Parse(standardOutput);
@@ -430,7 +456,11 @@ public sealed class DocumentConversionService(
                 root.TryGetProperty("succeeded", out var succeeded)
                 && succeeded.ValueKind == JsonValueKind.True,
                 root.TryGetProperty("skipped", out var skipped)
-                && skipped.ValueKind == JsonValueKind.True);
+                && skipped.ValueKind == JsonValueKind.True,
+                root.TryGetProperty("error", out var error)
+                && error.ValueKind == JsonValueKind.String
+                    ? error.GetString()
+                    : null);
             return true;
         }
         catch (JsonException)
@@ -467,5 +497,6 @@ public sealed class DocumentConversionService(
     // This record explicitly marks the directory and file that a single conversion operation owns.
     private sealed record StagingOutput(string DirectoryPath, string OutputPath);
 
-    private sealed record CliItemResult(bool Succeeded, bool Skipped);
+    // Preserve DOC2MD's structured error so expected document states can be reported separately from failures.
+    private sealed record CliItemResult(bool Succeeded, bool Skipped, string? Error);
 }

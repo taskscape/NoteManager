@@ -274,6 +274,33 @@ public sealed class DocumentConversionServiceTests
     }
 
     [Fact]
+    public async Task ConvertPendingAsync_SkipsPasswordProtectedPdfAndPreservesDiagnostics()
+    {
+        using var folder = new TemporaryFolder();
+        var sourcePath = Path.Combine(folder.Path, "protected.pdf");
+        var diagnosticPath = sourcePath + ".ex";
+        File.WriteAllText(sourcePath, "encrypted PDF");
+        File.WriteAllText(diagnosticPath, "DOC2MD encrypted PDF diagnostic");
+        var statuses = new List<string>();
+        var runner = new StubRunner((_, _) => PasswordProtectedPdfResult());
+        var context = CreateContext(folder.Path, statuses.Add);
+
+        var result = await new DocumentConversionService(
+            runner,
+            new DocumentConversionLog(context.ConfigurationDirectory),
+            new DocumentConversionOptions()).ConvertPendingAsync(context);
+
+        // A password prompt is not actionable in the background, but its DOC2MD diagnostic must remain available.
+        Assert.True(result.Succeeded);
+        Assert.Equal(0, result.Failures);
+        Assert.Equal(1, result.ExistingOrSkipped);
+        Assert.True(File.Exists(diagnosticPath));
+        Assert.DoesNotContain(statuses, status => status.Contains(
+            "failure(s)",
+            StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public async Task ConvertPendingAsync_ReportsConvertedSkippedAndFailedItems()
     {
         using var folder = new TemporaryFolder();
@@ -350,6 +377,15 @@ public sealed class DocumentConversionServiceTests
             1,
             """{ "succeeded": false, "exitCode": 1 }""",
             "conversion failed",
+            TimeSpan.FromSeconds(1),
+            false,
+            false);
+
+    private static Doc2MdProcessResult PasswordProtectedPdfResult() =>
+        new(
+            1,
+            """{ "succeeded": false, "error": "The document was encrypted and none of the provided passwords were the user or owner password." }""",
+            string.Empty,
             TimeSpan.FromSeconds(1),
             false,
             false);
