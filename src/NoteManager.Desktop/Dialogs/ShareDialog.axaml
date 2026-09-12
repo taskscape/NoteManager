@@ -1,3 +1,4 @@
+<!-- Keep the modal sharing workflow visible instead of allowing it to be hidden in the taskbar. -->
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:desktop="using:NoteManager.Desktop"
@@ -6,6 +7,7 @@
         Width="640"
         Height="250"
         CanResize="False"
+        CanMinimize="False"
         Background="{DynamicResource AppBackgroundBrush}"
         WindowStartupLocation="CenterOwner"
         Title="Share note">

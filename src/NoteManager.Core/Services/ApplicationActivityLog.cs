@@ -3,7 +3,7 @@ using System.Text;
 namespace NoteManager.App.Services;
 
 /// <summary>
-/// Writes a small local audit trail for application startup, folder use, and crashes.
+/// Writes a small local audit trail for application startup, folder use, recoverable failures, and crashes.
 /// </summary>
 public sealed class ApplicationActivityLog
 {
@@ -32,6 +32,18 @@ public sealed class ApplicationActivityLog
         => TryWriteFolderActivity(
             "Repository folder opened from previous session",
             folder);
+
+    /// <summary>
+    /// Records a handled operation failure with its complete exception chain so support can diagnose it.
+    /// </summary>
+    public bool TryWriteOperationFailure(string operation, Exception exception)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(operation);
+        ArgumentNullException.ThrowIfNull(exception);
+        return TryWrite(
+            $"Operation failed ({operation}):{Environment.NewLine}{Truncate(exception.ToString())}",
+            flushToDisk: true);
+    }
 
     public bool TryWriteUnhandledException(string source, Exception exception)
     {

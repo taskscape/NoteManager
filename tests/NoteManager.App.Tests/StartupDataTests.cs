@@ -89,6 +89,48 @@ public sealed class StartupDataTests
     }
 
     [Fact]
+    public void ApplicationActivityLog_RecordsHandledPublishFailureWithInnerException()
+    {
+        var logDirectory = Path.Combine(
+            Path.GetTempPath(),
+            $"NoteManager.ApplicationActivityLogPublish.{Guid.NewGuid():N}");
+
+        try
+        {
+            Exception caught;
+            try
+            {
+                throw new InvalidOperationException(
+                    "Publishing failed",
+                    new HttpRequestException("The sharing service could not be reached."));
+            }
+            catch (InvalidOperationException exception)
+            {
+                caught = exception;
+            }
+
+            // Recoverable sharing errors must retain their underlying network cause in the daily log.
+            Assert.True(new ApplicationActivityLog(logDirectory)
+                .TryWriteOperationFailure("Publishing a public link", caught));
+
+            var text = File.ReadAllText(Path.Combine(
+                logDirectory,
+                $"{ApplicationActivityLog.LogFilePrefix}{DateTime.Today:yyyy-MM-dd}.log"));
+            Assert.Contains("Operation failed (Publishing a public link):", text);
+            Assert.Contains("System.InvalidOperationException: Publishing failed", text);
+            Assert.Contains("System.Net.Http.HttpRequestException", text);
+            Assert.Contains("The sharing service could not be reached.", text);
+        }
+        finally
+        {
+            if (Directory.Exists(logDirectory))
+            {
+                Directory.Delete(logDirectory, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public void ApplicationActivityLog_TruncatesOversizedCrashText()
     {
         var logDirectory = Path.Combine(

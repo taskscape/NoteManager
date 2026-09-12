@@ -46,7 +46,8 @@ public partial class ShareDialog : Window
         }
         catch (Exception exception)
         {
-            ViewModel.ReportClipboardFailure(exception.Message);
+            // Pass the exception so the application log retains its complete clipboard failure details.
+            ViewModel.ReportClipboardFailure(exception.Message, exception);
         }
     }
 

@@ -13,6 +13,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private readonly RangeObservableCollection<NoteItem> _allNotes;
     private readonly RangeObservableCollection<NoteItem> _visibleNotes;
     private readonly InfostackerPublishingService _infostackerPublishingService;
+    private readonly ApplicationActivityLog _activityLog;
     private CancellationTokenSource? _indexCancellation;
     private CancellationTokenSource? _mediaRefreshCancellation;
     private CancellationTokenSource? _publishCancellation;
@@ -46,17 +47,24 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private const string UntaggedFilterKey = "__untagged__";
 
     public MainViewModel(
-        InfostackerPublishingService? infostackerPublishingService = null)
-        : this(infostackerPublishingService, useSampleDataForTesting: false)
+        InfostackerPublishingService? infostackerPublishingService = null,
+        ApplicationActivityLog? activityLog = null)
+        : this(
+            infostackerPublishingService,
+            activityLog,
+            useSampleDataForTesting: false)
     {
     }
 
     private MainViewModel(
         InfostackerPublishingService? infostackerPublishingService,
+        ApplicationActivityLog? activityLog,
         bool useSampleDataForTesting)
     {
         _infostackerPublishingService =
             infostackerPublishingService ?? new InfostackerPublishingService();
+        // Share failures are recoverable, but still need the application log's full exception details.
+        _activityLog = activityLog ?? new ApplicationActivityLog();
         _allNotes = new RangeObservableCollection<NoteItem>();
         _visibleNotes = new RangeObservableCollection<NoteItem>();
         NavigationItems = [];
@@ -97,8 +105,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     /// need representative note data without opening a user folder.
     /// </summary>
     public static MainViewModel CreateWithSampleDataForTesting(
-        InfostackerPublishingService? infostackerPublishingService = null)
-        => new(infostackerPublishingService, useSampleDataForTesting: true);
+        InfostackerPublishingService? infostackerPublishingService = null,
+        ApplicationActivityLog? activityLog = null)
+        => new(infostackerPublishingService, activityLog, useSampleDataForTesting: true);
 
     public ObservableCollection<NavigationItem> NavigationItems { get; }
     public ObservableCollection<NoteItem> NotesView => _visibleNotes;
@@ -850,6 +859,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
         catch (InfostackerPublishingException exception)
         {
+            // Preserve the wrapped transport or parsing cause while the dialog shows a friendly message.
+            _activityLog.TryWriteOperationFailure("Publishing a public link", exception);
             ShareStatusText = exception.Message;
             SetStatus(exception.Message);
             return null;
@@ -868,8 +879,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         SetStatus($"Published note to Infostacker: {publicUrl}");
     }
 
-    public void ReportClipboardFailure(string message)
+    public void ReportClipboardFailure(string message, Exception? exception = null)
     {
+        // Clipboard failures occur after publishing, so record them separately from upload failures.
+        _activityLog.TryWriteOperationFailure(
+            "Copying a public link to the clipboard",
+            exception ?? new InvalidOperationException(message));
         ShareStatusText =
             $"The note was published, but the public link could not be copied: {message}";
         SetStatus("Note published, but copying the public link failed");
