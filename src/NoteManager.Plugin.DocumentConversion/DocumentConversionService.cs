@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using NoteManager.Plugins;
 
@@ -27,6 +28,19 @@ public sealed class DocumentConversionService(
         [".doc", ".docm", ".rtf", ".odt", ".xls", ".xlsm", ".ods",
          ".ppt", ".pptm", ".odp"],
         StringComparer.OrdinalIgnoreCase);
+
+    // Explicit byte-order marks allow text copied from Windows applications to retain its original characters.
+    private static readonly byte[] Utf8ByteOrderMark = [0xEF, 0xBB, 0xBF];
+    private static readonly byte[] Utf16LittleEndianByteOrderMark = [0xFF, 0xFE];
+    private static readonly byte[] Utf16BigEndianByteOrderMark = [0xFE, 0xFF];
+    private static readonly byte[] Utf32LittleEndianByteOrderMark = [0xFF, 0xFE, 0x00, 0x00];
+    private static readonly byte[] Utf32BigEndianByteOrderMark = [0x00, 0x00, 0xFE, 0xFF];
+    private static readonly UTF8Encoding StrictUtf8 = new(false, true);
+    private static readonly UTF8Encoding Utf8WithByteOrderMark = new(true);
+    private static readonly UnicodeEncoding Utf16LittleEndian = new(false, false, true);
+    private static readonly UnicodeEncoding Utf16BigEndian = new(true, false, true);
+    private static readonly UTF32Encoding Utf32LittleEndian = new(false, false, true);
+    private static readonly UTF32Encoding Utf32BigEndian = new(true, false, true);
 
     public async Task<DocumentConversionResult> ConvertPendingAsync(
         PluginHostContext context,
@@ -82,8 +96,21 @@ public sealed class DocumentConversionService(
             var stagingOutput = CreateStagingOutput(document.OutputPath);
             try
             {
+                string conversionInputPath;
+                try
+                {
+                    conversionInputPath = PrepareTextInput(document, stagingOutput.DirectoryPath);
+                }
+                catch (Exception exception) when (
+                    exception is IOException or UnauthorizedAccessException or InvalidDataException)
+                {
+                    failures++;
+                    await LogItemFailureAsync(relativePath, exception.Message);
+                    continue;
+                }
+
                 var process = await runner.ConvertFileAsync(
-                    document.InputPath,
+                    conversionInputPath,
                     stagingOutput.OutputPath,
                     cancellationToken);
 
@@ -242,6 +269,79 @@ public sealed class DocumentConversionService(
         return !extension.Equals(".docx", StringComparison.OrdinalIgnoreCase)
                || !Path.GetFileName(path).StartsWith("~", StringComparison.Ordinal);
     }
+
+    private static string PrepareTextInput(
+        PendingDocument document,
+        string stagingDirectory)
+    {
+        if (!IsPlainTextDocument(document.InputPath))
+        {
+            return document.InputPath;
+        }
+
+        var stagingInputPath = Path.Combine(
+            stagingDirectory,
+            Path.GetFileName(document.InputPath));
+        // MarkItDown treats no-BOM text as ASCII, so stage a UTF-8 BOM copy without modifying the source file.
+        File.WriteAllText(
+            stagingInputPath,
+            ReadPlainText(document.InputPath),
+            Utf8WithByteOrderMark);
+        return stagingInputPath;
+    }
+
+    private static bool IsPlainTextDocument(string path) =>
+        Path.GetExtension(path) is ".txt" or ".text";
+
+    private static string ReadPlainText(string path)
+    {
+        var bytes = File.ReadAllBytes(path);
+        if (StartsWith(bytes, Utf32LittleEndianByteOrderMark))
+        {
+            return Utf32LittleEndian.GetString(bytes, Utf32LittleEndianByteOrderMark.Length,
+                bytes.Length - Utf32LittleEndianByteOrderMark.Length);
+        }
+
+        if (StartsWith(bytes, Utf32BigEndianByteOrderMark))
+        {
+            return Utf32BigEndian.GetString(bytes, Utf32BigEndianByteOrderMark.Length,
+                bytes.Length - Utf32BigEndianByteOrderMark.Length);
+        }
+
+        if (StartsWith(bytes, Utf8ByteOrderMark))
+        {
+            return StrictUtf8.GetString(bytes, Utf8ByteOrderMark.Length,
+                bytes.Length - Utf8ByteOrderMark.Length);
+        }
+
+        if (StartsWith(bytes, Utf16LittleEndianByteOrderMark))
+        {
+            return Utf16LittleEndian.GetString(bytes, Utf16LittleEndianByteOrderMark.Length,
+                bytes.Length - Utf16LittleEndianByteOrderMark.Length);
+        }
+
+        if (StartsWith(bytes, Utf16BigEndianByteOrderMark))
+        {
+            return Utf16BigEndian.GetString(bytes, Utf16BigEndianByteOrderMark.Length,
+                bytes.Length - Utf16BigEndianByteOrderMark.Length);
+        }
+
+        try
+        {
+            return StrictUtf8.GetString(bytes);
+        }
+        catch (DecoderFallbackException exception)
+        {
+            // Reject unknown encodings instead of silently replacing characters in the generated Markdown.
+            throw new InvalidDataException(
+                "The text file is not valid UTF-8, UTF-16, or UTF-32 text.",
+                exception);
+        }
+    }
+
+    private static bool StartsWith(byte[] bytes, byte[] prefix) =>
+        bytes.Length >= prefix.Length
+        && bytes.AsSpan(0, prefix.Length).SequenceEqual(prefix);
 
     private static StagingOutput CreateStagingOutput(string outputPath)
     {

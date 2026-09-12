@@ -1,3 +1,4 @@
+using System.Text;
 using NoteManager.Plugins;
 using Xunit;
 
@@ -24,7 +25,10 @@ public sealed class DocumentConversionServiceTests
         var runner = new StubRunner((input, output) =>
         {
             attemptedInputs.Add(input);
-            if (input.Equals(newerInput, StringComparison.OrdinalIgnoreCase))
+            // Text sources are staged before conversion, so the filename identifies the source under test.
+            if (Path.GetFileName(input).Equals(
+                    Path.GetFileName(newerInput),
+                    StringComparison.OrdinalIgnoreCase))
             {
                 File.WriteAllText(output, "converted");
                 return SuccessResult();
@@ -46,7 +50,7 @@ public sealed class DocumentConversionServiceTests
         Assert.False(result.Succeeded);
         Assert.Equal(1, result.Converted);
         Assert.Equal(1, result.Failures);
-        Assert.Equal(newerInput, attemptedInputs[0]);
+        Assert.Equal("newer.txt", Path.GetFileName(attemptedInputs[0]));
         Assert.Equal("converted", File.ReadAllText(Path.ChangeExtension(newerInput, ".md")));
         Assert.False(File.Exists(Path.ChangeExtension(olderInput, ".md")));
         Assert.True(File.Exists(existingTemporaryOutput));
@@ -214,6 +218,62 @@ public sealed class DocumentConversionServiceTests
     }
 
     [Fact]
+    public async Task ConvertPendingAsync_StagesUtf8TextWithByteOrderMark()
+    {
+        using var folder = new TemporaryFolder();
+        const string sourceText = "Zażółć gęślą jaźń";
+        var sourcePath = Path.Combine(folder.Path, "utf8.txt");
+        File.WriteAllText(sourcePath, sourceText, new UTF8Encoding(false));
+        byte[]? converterInput = null;
+        var runner = new StubRunner((input, output) =>
+        {
+            converterInput = File.ReadAllBytes(input);
+            File.WriteAllText(output, "converted");
+            return SuccessResult();
+        });
+        var context = CreateContext(folder.Path);
+
+        var result = await new DocumentConversionService(
+            runner,
+            new DocumentConversionLog(context.ConfigurationDirectory),
+            new DocumentConversionOptions()).ConvertPendingAsync(context);
+
+        // A BOM distinguishes UTF-8 text from ASCII for DOC2MD without rewriting the original note source.
+        Assert.True(result.Succeeded);
+        var capturedInput = Assert.IsType<byte[]>(converterInput);
+        Assert.Equal([0xEF, 0xBB, 0xBF], capturedInput[..3]);
+        Assert.Equal(sourceText, StrictUtf8Text(capturedInput[3..]));
+    }
+
+    [Fact]
+    public async Task ConvertPendingAsync_StagesUtf16TextAsUtf8()
+    {
+        using var folder = new TemporaryFolder();
+        const string sourceText = "uniknąć odpowiedzialności karnej";
+        var sourcePath = Path.Combine(folder.Path, "utf16.txt");
+        File.WriteAllText(sourcePath, sourceText, new UnicodeEncoding(false, true));
+        byte[]? converterInput = null;
+        var runner = new StubRunner((input, output) =>
+        {
+            converterInput = File.ReadAllBytes(input);
+            File.WriteAllText(output, "converted");
+            return SuccessResult();
+        });
+        var context = CreateContext(folder.Path);
+
+        var result = await new DocumentConversionService(
+            runner,
+            new DocumentConversionLog(context.ConfigurationDirectory),
+            new DocumentConversionOptions()).ConvertPendingAsync(context);
+
+        // Unicode clipboard text is normalized into the same BOM-marked UTF-8 input DOC2MD accepts.
+        Assert.True(result.Succeeded);
+        var capturedInput = Assert.IsType<byte[]>(converterInput);
+        Assert.Equal([0xEF, 0xBB, 0xBF], capturedInput[..3]);
+        Assert.Equal(sourceText, StrictUtf8Text(capturedInput[3..]));
+    }
+
+    [Fact]
     public async Task ConvertPendingAsync_ReportsConvertedSkippedAndFailedItems()
     {
         using var folder = new TemporaryFolder();
@@ -272,6 +332,9 @@ public sealed class DocumentConversionServiceTests
             TimeSpan.FromSeconds(1),
             false,
             false);
+
+    private static string StrictUtf8Text(byte[] bytes) =>
+        new UTF8Encoding(false, true).GetString(bytes);
 
     private static Doc2MdProcessResult SkippedResult() =>
         new(
