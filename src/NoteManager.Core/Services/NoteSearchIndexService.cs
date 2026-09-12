@@ -34,6 +34,9 @@ public sealed record NoteSearchQueryResult(
 public static class NoteSearchIndexService
 {
     private const int BatchSize = 200;
+    // Only these SQLite codes prove the file itself is unsafe to retain during an explicit rebuild.
+    private const int SqliteCorruptDatabaseErrorCode = 11;
+    private const int SqliteNotADatabaseErrorCode = 26;
     // Schema version 3 persists a path key collation that matches the indexed volume.
     private const int SchemaVersion = 3;
     private const string IndexFolderName = ".notes";
@@ -66,8 +69,8 @@ public static class NoteSearchIndexService
             return new NoteSearchIndexResult(0, 0, 0, 0, databasePath);
         }
 
-        using var connection = OpenConnection(databasePath, readOnly: false);
-        InitializeDatabase(connection, pathComparer);
+        // A retry must recreate a corrupt database, not merely attempt another write against it.
+        using var connection = OpenOrRecreateIndex(databasePath, pathComparer);
 
         var indexedFiles = ReadIndexedFiles(connection, pathComparer, cancellationToken);
         if (cancellationToken.IsCancellationRequested)
@@ -248,10 +251,12 @@ public static class NoteSearchIndexService
         var databasePath = GetDatabasePath(folderPath);
         if (!File.Exists(databasePath))
         {
+            // Preserve the concrete recovery reason so callers can distinguish a missing index from an empty search.
             return new NoteSearchQueryResult(
                 [],
                 query.Mode,
-                IsAvailable: false);
+                IsAvailable: false,
+                Error: $"Search index database is missing: {databasePath}");
         }
 
         if (query.IsEmpty)
@@ -371,12 +376,14 @@ public static class NoteSearchIndexService
                 query.Mode,
                 IsAvailable: true);
         }
-        catch (SqliteException)
+        catch (SqliteException exception)
         {
+            // SQLite failures are recoverable through an index rebuild, but the error code remains valuable for support.
             return new NoteSearchQueryResult(
                 [],
                 query.Mode,
-                IsAvailable: false);
+                IsAvailable: false,
+                Error: $"SQLite error {exception.SqliteErrorCode}: {exception.Message}");
         }
     }
 
@@ -442,6 +449,45 @@ public static class NoteSearchIndexService
         var connection = new SqliteConnection(builder.ToString());
         connection.Open();
         return connection;
+    }
+
+    private static SqliteConnection OpenOrRecreateIndex(
+        string databasePath,
+        StringComparer pathComparer)
+    {
+        SqliteConnection? connection = null;
+        try
+        {
+            connection = OpenConnection(databasePath, readOnly: false);
+            InitializeDatabase(connection, pathComparer);
+            return connection;
+        }
+        catch (SqliteException exception) when (
+            File.Exists(databasePath)
+            && exception.SqliteErrorCode is SqliteCorruptDatabaseErrorCode or SqliteNotADatabaseErrorCode)
+        {
+            connection?.Dispose();
+            // This non-pooled connection must close before a retry can replace a corrupt file on Windows.
+            File.Delete(databasePath);
+
+            var recreatedConnection = OpenConnection(databasePath, readOnly: false);
+            try
+            {
+                InitializeDatabase(recreatedConnection, pathComparer);
+                return recreatedConnection;
+            }
+            catch
+            {
+                recreatedConnection.Dispose();
+                throw;
+            }
+        }
+        catch
+        {
+            // Do not leak a partially initialized non-pooled connection when recovery is not safe.
+            connection?.Dispose();
+            throw;
+        }
     }
 
     private static void InitializeDatabase(SqliteConnection connection, StringComparer pathComparer)

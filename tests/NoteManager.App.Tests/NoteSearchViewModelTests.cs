@@ -1,4 +1,5 @@
 using Microsoft.Data.Sqlite;
+using NoteManager.App.Services;
 using NoteManager.App.ViewModels;
 using Xunit;
 
@@ -156,6 +157,71 @@ public sealed class NoteSearchViewModelTests
         }
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Search_WhenIndexReadFailsAfterASuccessfulQuery_ClearsOldHitsAndOffersRebuild(
+        bool corruptDatabase)
+    {
+        var folderPath = Directory.CreateDirectory(
+            Path.Combine(
+                Path.GetTempPath(),
+                $"NoteManager.SearchUnavailableTests.{Guid.NewGuid():N}")).FullName;
+        File.WriteAllText(Path.Combine(folderPath, "Alpha.md"), "alpha marker");
+        File.WriteAllText(Path.Combine(folderPath, "Beta.md"), "beta marker");
+
+        using var viewModel = new MainViewModel();
+        try
+        {
+            await viewModel.LoadMarkdownFolderAsync(folderPath);
+            await WaitForIndexAsync(viewModel);
+            viewModel.SearchText = "alpha marker";
+            await WaitForSearchAsync(viewModel);
+            Assert.Equal(["Alpha.md"], viewModel.NotesView.Select(note => note.FileName));
+
+            // Change the completed database only after pooled read connections have been released.
+            SqliteConnection.ClearAllPools();
+            var databasePath = NoteSearchIndexService.GetDatabasePath(folderPath);
+            if (corruptDatabase)
+            {
+                // Corrupt bytes exercise SQLite's read-error branch after alpha has already succeeded.
+                File.WriteAllText(databasePath, "this is not a SQLite database");
+            }
+            else
+            {
+                // Removing the file exercises the unavailable-database branch after alpha has already succeeded.
+                File.Delete(databasePath);
+            }
+
+            viewModel.SearchText = "beta marker";
+            viewModel.SubmitSearch();
+            await WaitForSearchFailureAsync(viewModel);
+
+            // A failed beta query must never present alpha's hit as a successful beta result.
+            Assert.False(viewModel.IsSearchActive);
+            Assert.Equal(["Alpha.md", "Beta.md"], viewModel.NotesView.Select(note => note.FileName).Order());
+            Assert.False(viewModel.IsSearchAvailable);
+            Assert.True(viewModel.CanRetrySearchIndex);
+            Assert.Contains("beta marker", viewModel.StatusText, StringComparison.Ordinal);
+            Assert.Contains("not search results", viewModel.StatusText, StringComparison.OrdinalIgnoreCase);
+
+            // The recovery action rebuilds the database and automatically reruns the retained query.
+            viewModel.RetrySearchIndexCommand.Execute(null);
+            await WaitForIndexAsync(viewModel);
+            await WaitForSearchAsync(viewModel);
+            Assert.Equal(["Beta.md"], viewModel.NotesView.Select(note => note.FileName));
+        }
+        finally
+        {
+            viewModel.Dispose();
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(folderPath))
+            {
+                Directory.Delete(folderPath, recursive: true);
+            }
+        }
+    }
+
     [Fact]
     public async Task SearchResults_KeepCaseDistinctNotesSeparateOnCaseSensitiveVolumes()
     {
@@ -251,5 +317,17 @@ public sealed class NoteSearchViewModelTests
         }
 
         Assert.False(viewModel.IsSearching);
+    }
+
+    private static async Task WaitForSearchFailureAsync(MainViewModel viewModel)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (viewModel.IsSearchAvailable && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(25);
+        }
+
+        // Availability changes only after the active query returns an unavailable search result.
+        Assert.False(viewModel.IsSearchAvailable);
     }
 }

@@ -577,6 +577,12 @@
                        FontSize="11"
                        Text="{Binding SearchIndexStatus}" />
           </Border>
+          <!-- A failed search index can be rebuilt immediately instead of leaving the user with an unavailable search box. -->
+          <Button x:Name="RetrySearchIndexButton"
+                  AutomationProperties.AutomationId="RetrySearchIndexButton"
+                  Command="{Binding RetrySearchIndexCommand}"
+                  Content="Rebuild index"
+                  IsVisible="{Binding CanRetrySearchIndex}" />
         </StackPanel>
       </Grid>
     </Border>

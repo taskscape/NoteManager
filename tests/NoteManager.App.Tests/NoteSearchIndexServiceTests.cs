@@ -79,6 +79,54 @@ public sealed class NoteSearchIndexServiceTests
     }
 
     [Fact]
+    public void Search_WhenDatabaseIsMissing_ReturnsAnUnavailableDiagnostic()
+    {
+        // Arrange: create a valid index first so this is a read-time failure, not an initial indexing failure.
+        using var folder = new SearchTestFolder();
+        folder.WriteNote("Searchable.md", "missing index fixture", modifiedDaysAgo: 0);
+        folder.UpdateIndex();
+        var databasePath = NoteSearchIndexService.GetDatabasePath(folder.Path);
+        SqliteConnection.ClearAllPools();
+        File.Delete(databasePath);
+
+        // Act
+        var result = NoteSearchIndexService.Search(
+            folder.Path,
+            "missing index",
+            maxResults: 100,
+            CancellationToken.None);
+
+        // Assert: callers receive an actionable reason instead of an indistinguishable false flag.
+        Assert.False(result.IsAvailable);
+        Assert.Empty(result.Hits);
+        Assert.Contains("missing", result.Error, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Search_WhenDatabaseIsCorrupt_ReturnsTheSqliteDiagnostic()
+    {
+        // Arrange: replace a completed index with invalid bytes to exercise SQLite's read failure path.
+        using var folder = new SearchTestFolder();
+        folder.WriteNote("Searchable.md", "corrupt index fixture", modifiedDaysAgo: 0);
+        folder.UpdateIndex();
+        var databasePath = NoteSearchIndexService.GetDatabasePath(folder.Path);
+        SqliteConnection.ClearAllPools();
+        File.WriteAllText(databasePath, "this is not a SQLite database");
+
+        // Act
+        var result = NoteSearchIndexService.Search(
+            folder.Path,
+            "corrupt index",
+            maxResults: 100,
+            CancellationToken.None);
+
+        // Assert: the SQLite failure remains available for the UI and support diagnostics.
+        Assert.False(result.IsAvailable);
+        Assert.Empty(result.Hits);
+        Assert.Contains("SQLite error", result.Error, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Search_StrictMode_RequiresEveryTermAndOrdersByModificationTime()
     {
         using var folder = new SearchTestFolder();

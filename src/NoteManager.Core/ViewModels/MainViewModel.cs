@@ -178,6 +178,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         RetryLoadSelectedNoteCommand = new RelayCommand(
             _ => RetryLoadSelectedNote(),
             _ => CanRetryLoadSelectedNote);
+        // An unavailable index must have an in-product recovery path after a search read fails.
+        RetrySearchIndexCommand = new RelayCommand(
+            _ => RetrySearchIndex(),
+            _ => CanRetrySearchIndex);
         OpenAttachmentCommand = new RelayCommand(_ => OpenAttachment(), _ => SelectedNote is not null);
         SortNotesCommand = new RelayCommand(
             parameter =>
@@ -232,6 +236,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public RelayCommand ShareCommand { get; }
     public RelayCommand CloseShareCommand { get; }
     public RelayCommand RetryLoadSelectedNoteCommand { get; }
+    public RelayCommand RetrySearchIndexCommand { get; }
     public RelayCommand OpenAttachmentCommand { get; }
     public RelayCommand SortNotesCommand { get; }
     public RelayCommand ViewModeCommand { get; }
@@ -536,6 +541,13 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     public bool CanRetryLoadSelectedNote
         => SelectedNote is { IsMarkdownFile: true, IsContentUnavailable: true };
+
+    // Only expose a rebuild after a failed index read; indexing itself already retries on the next vault mutation.
+    public bool CanRetrySearchIndex
+        => IsFolderMode
+           && !_isSearchIndexAvailable
+           && !IsIndexing
+           && !string.IsNullOrWhiteSpace(CurrentFolderPath);
 
     // Target-specific eligibility keeps modal operations independent from a later UI selection.
     private bool CanDeleteNote(NoteItem note)
@@ -2365,7 +2377,16 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 SetStatus(
                     $"{(result.Mode == NoteSearchMode.Strict ? "Strict search" : "Best match")} · "
                     + $"{NotesView.Count:N0} notes");
+                return;
             }
+
+            // Never leave hits from an earlier expression visible as if they answered this failed query.
+            ClearActiveSearch(refreshNotes: true);
+            SearchIndexStatus = "Index unavailable — rebuild to retry";
+            SetSearchIndexAvailable(false);
+            SetStatus(
+                $"Search unavailable for \"{queryText}\"; displayed notes are not search results. "
+                + $"Rebuild the index to retry. {result.Error ?? "No diagnostic details were provided."}");
         }
         catch (OperationCanceledException)
         {
@@ -2387,6 +2408,15 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         _searchCancellation = null;
         _searchGeneration++;
         IsSearching = false;
+    }
+
+    private void RetrySearchIndex()
+    {
+        if (CanRetrySearchIndex)
+        {
+            // Recreate a missing or unreadable SQLite index without requiring the user to reopen the vault.
+            StartBackgroundIndex(CurrentFolderPath);
+        }
     }
 
     private void ClearActiveSearch(bool refreshNotes)
@@ -2441,6 +2471,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(IsSearchInputEnabled));
         OnPropertyChanged(nameof(IsSearchShortcutVisible));
         OnPropertyChanged(nameof(SearchPlaceholderText));
+        OnPropertyChanged(nameof(CanRetrySearchIndex));
+        RetrySearchIndexCommand.RaiseCanExecuteChanged();
     }
 
     public void Dispose()
