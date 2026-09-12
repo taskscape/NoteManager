@@ -79,83 +79,94 @@ public sealed class DocumentConversionService(
                 document.InputPath);
             context.ReportStatus(
                 $"Converting document {index + 1:N0} of {pendingDocuments.Count:N0}: {relativePath}");
-            var existingTemporaryOutputs = FindAtomicTemporaryOutputs(
-                document.OutputPath);
-            var process = await runner.ConvertFileAsync(
-                document.InputPath,
-                document.OutputPath,
-                cancellationToken);
-
-            if (process.WasCancelled)
+            var stagingOutput = CreateStagingOutput(document.OutputPath);
+            try
             {
-                CleanupFailedDocument(document.OutputPath, existingTemporaryOutputs);
-                var message =
-                    $"Document conversion was cancelled after {converted:N0} successful conversion(s).";
-                await LogAndReportAsync(context, message, CancellationToken.None);
-                return new DocumentConversionResult(
-                    false,
-                    true,
-                    message,
-                    pendingDocuments.Count,
-                    converted,
-                    skipped,
-                    failures);
-            }
+                var process = await runner.ConvertFileAsync(
+                    document.InputPath,
+                    stagingOutput.OutputPath,
+                    cancellationToken);
 
-            if (process.TimedOut)
-            {
-                failures++;
-                CleanupFailedDocument(document.OutputPath, existingTemporaryOutputs);
-                await LogItemFailureAsync(
-                    relativePath,
-                    $"exceeded the {options.CommandTimeoutMinutes:N0}-minute timeout");
-                continue;
-            }
-
-            if (!TryReadItemResult(process.StandardOutput, out var item))
-            {
-                failures++;
-                CleanupFailedDocument(document.OutputPath, existingTemporaryOutputs);
-                var detail = process.Succeeded
-                    ? "returned an unreadable JSON result"
-                    : $"failed with exit code {process.ExitCode}: {Bound(process.StandardError)}";
-                await LogItemFailureAsync(relativePath, detail);
-                continue;
-            }
-
-            if (item.Skipped)
-            {
-                skipped++;
-                continue;
-            }
-
-            if (process.Succeeded
-                && item.Succeeded
-                && File.Exists(document.OutputPath))
-            {
-                try
+                if (process.WasCancelled)
                 {
-                    AppendOriginalPdfEmbed(document);
+                    var message =
+                        $"Document conversion was cancelled after {converted:N0} successful conversion(s).";
+                    await LogAndReportAsync(context, message, CancellationToken.None);
+                    return new DocumentConversionResult(
+                        false,
+                        true,
+                        message,
+                        pendingDocuments.Count,
+                        converted,
+                        skipped,
+                        failures);
                 }
-                catch (Exception exception) when (
-                    exception is IOException or UnauthorizedAccessException)
+
+                if (process.TimedOut)
                 {
                     failures++;
-                    CleanupFailedDocument(document.OutputPath, existingTemporaryOutputs);
-                    await LogItemFailureAsync(relativePath, exception.Message);
+                    await LogItemFailureAsync(
+                        relativePath,
+                        $"exceeded the {options.CommandTimeoutMinutes:N0}-minute timeout");
                     continue;
                 }
 
-                converted++;
-                continue;
-            }
+                if (!TryReadItemResult(process.StandardOutput, out var item))
+                {
+                    failures++;
+                    var detail = process.Succeeded
+                        ? "returned an unreadable JSON result"
+                        : $"failed with exit code {process.ExitCode}: {Bound(process.StandardError)}";
+                    await LogItemFailureAsync(relativePath, detail);
+                    continue;
+                }
 
-            failures++;
-            CleanupFailedDocument(document.OutputPath, existingTemporaryOutputs);
-            var failureDetail = string.IsNullOrWhiteSpace(process.StandardError)
-                ? "DOC2MD reported that the document was not converted"
-                : Bound(process.StandardError);
-            await LogItemFailureAsync(relativePath, failureDetail);
+                if (item.Skipped)
+                {
+                    skipped++;
+                    continue;
+                }
+
+                if (process.Succeeded
+                    && item.Succeeded
+                    && File.Exists(stagingOutput.OutputPath))
+                {
+                    try
+                    {
+                        // Complete post-processing while the output is private so failures cannot affect a concurrent note.
+                        AppendOriginalPdfEmbed(document, stagingOutput.OutputPath);
+                        if (!TryPublishStagedDocument(stagingOutput.OutputPath, document.OutputPath))
+                        {
+                            failures++;
+                            await LogItemFailureAsync(
+                                relativePath,
+                                "the Markdown output path was created by another writer during conversion");
+                            continue;
+                        }
+                    }
+                    catch (Exception exception) when (
+                        exception is IOException or UnauthorizedAccessException)
+                    {
+                        failures++;
+                        await LogItemFailureAsync(relativePath, exception.Message);
+                        continue;
+                    }
+
+                    converted++;
+                    continue;
+                }
+
+                failures++;
+                var failureDetail = string.IsNullOrWhiteSpace(process.StandardError)
+                    ? "DOC2MD reported that the document was not converted"
+                    : Bound(process.StandardError);
+                await LogItemFailureAsync(relativePath, failureDetail);
+            }
+            finally
+            {
+                // Each operation cleans only its own private staging directory, never a shared output location.
+                CleanupStagingOutput(stagingOutput);
+            }
         }
 
         var resultMessage = failures == 0
@@ -199,7 +210,7 @@ public sealed class DocumentConversionService(
         };
 
         return Directory.EnumerateFiles(vaultPath, "*", enumerationOptions)
-            .Where(path => SupportedExtensions.Contains(Path.GetExtension(path)))
+            .Where(IsSupportedDocument)
             .Select(path => new FileInfo(path))
             .GroupBy(
                 file => Path.ChangeExtension(file.FullName, ".md"),
@@ -219,44 +230,56 @@ public sealed class DocumentConversionService(
             .ToArray();
     }
 
-    private static HashSet<string> FindAtomicTemporaryOutputs(string outputPath)
+    private static bool IsSupportedDocument(string path)
     {
-        var directory = Path.GetDirectoryName(Path.GetFullPath(outputPath))!;
-        return Directory.Exists(directory)
-            ? Directory.EnumerateFiles(directory, ".doc2md-*.tmp")
-                .ToHashSet(StringComparer.OrdinalIgnoreCase)
-            : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-    }
-
-    private static void CleanupFailedDocument(
-        string outputPath,
-        IReadOnlySet<string> existingTemporaryOutputs)
-    {
-        TryDelete(outputPath);
-        var directory = Path.GetDirectoryName(Path.GetFullPath(outputPath))!;
-        if (!Directory.Exists(directory))
+        var extension = Path.GetExtension(path);
+        if (!SupportedExtensions.Contains(extension))
         {
-            return;
+            return false;
         }
 
-        foreach (var temporaryOutput in Directory.EnumerateFiles(
-                     directory,
-                     ".doc2md-*.tmp"))
-        {
-            if (!existingTemporaryOutputs.Contains(temporaryOutput))
-            {
-                TryDelete(temporaryOutput);
-            }
-        }
+        // Word uses tilde-prefixed .docx files for transient owner/lock metadata, not document content.
+        return !extension.Equals(".docx", StringComparison.OrdinalIgnoreCase)
+               || !Path.GetFileName(path).StartsWith("~", StringComparison.Ordinal);
     }
 
-    private static void TryDelete(string path)
+    private static StagingOutput CreateStagingOutput(string outputPath)
+    {
+        var directory = Path.GetDirectoryName(Path.GetFullPath(outputPath))!;
+        // A unique child directory confines converter artifacts to the operation that created them.
+        var stagingDirectory = Path.Combine(
+            directory,
+            $".notemanager-doc2md-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(stagingDirectory);
+        return new StagingOutput(
+            stagingDirectory,
+            Path.Combine(stagingDirectory, Path.GetFileName(outputPath)));
+    }
+
+    private static bool TryPublishStagedDocument(
+        string stagedOutputPath,
+        string outputPath)
     {
         try
         {
-            if (File.Exists(path))
+            // Moving within the destination directory keeps publication atomic and rejects a concurrent destination.
+            File.Move(stagedOutputPath, outputPath, overwrite: false);
+            return true;
+        }
+        catch (IOException) when (File.Exists(outputPath))
+        {
+            return false;
+        }
+    }
+
+    private static void CleanupStagingOutput(StagingOutput stagingOutput)
+    {
+        try
+        {
+            if (Directory.Exists(stagingOutput.DirectoryPath))
             {
-                File.Delete(path);
+                // The unique directory is operation-owned, so recursive cleanup cannot target another writer's files.
+                Directory.Delete(stagingOutput.DirectoryPath, recursive: true);
             }
         }
         catch (Exception exception) when (
@@ -266,7 +289,9 @@ public sealed class DocumentConversionService(
         }
     }
 
-    private static void AppendOriginalPdfEmbed(PendingDocument document)
+    private static void AppendOriginalPdfEmbed(
+        PendingDocument document,
+        string stagedOutputPath)
     {
         if (!Path.GetExtension(document.InputPath)
             .Equals(".pdf", StringComparison.OrdinalIgnoreCase))
@@ -281,7 +306,7 @@ public sealed class DocumentConversionService(
 
         // Keep the source PDF discoverable from generated Markdown as its durable conversion relationship.
         File.AppendAllText(
-            document.OutputPath,
+            stagedOutputPath,
             $"{Environment.NewLine}{Environment.NewLine}![[{escapedSourcePath}]]");
     }
 
@@ -338,6 +363,9 @@ public sealed class DocumentConversionService(
         string InputPath,
         string OutputPath,
         DateTime LastWriteTimeUtc);
+
+    // This record explicitly marks the directory and file that a single conversion operation owns.
+    private sealed record StagingOutput(string DirectoryPath, string OutputPath);
 
     private sealed record CliItemResult(bool Succeeded, bool Skipped);
 }

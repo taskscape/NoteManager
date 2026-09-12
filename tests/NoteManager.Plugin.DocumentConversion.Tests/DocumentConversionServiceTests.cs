@@ -7,7 +7,7 @@ namespace NoteManager.Plugin.DocumentConversion.Tests;
 public sealed class DocumentConversionServiceTests
 {
     [Fact]
-    public async Task ConvertPendingAsync_PreservesSuccessfulOutputAndCleansOnlyFailedDocument()
+    public async Task ConvertPendingAsync_PreservesSuccessfulOutputAndLeavesSharedTemporaryFilesUntouched()
     {
         using var folder = new TemporaryFolder();
         var olderInput = Path.Combine(folder.Path, "older.txt");
@@ -50,7 +50,8 @@ public sealed class DocumentConversionServiceTests
         Assert.Equal("converted", File.ReadAllText(Path.ChangeExtension(newerInput, ".md")));
         Assert.False(File.Exists(Path.ChangeExtension(olderInput, ".md")));
         Assert.True(File.Exists(existingTemporaryOutput));
-        Assert.Single(Directory.EnumerateFiles(folder.Path, ".doc2md-*.tmp"));
+        // Shared temporary names do not establish ownership, so both existing and newly appearing files survive.
+        Assert.Equal(2, Directory.EnumerateFiles(folder.Path, ".doc2md-*.tmp").Count());
     }
 
     [Fact]
@@ -88,6 +89,90 @@ public sealed class DocumentConversionServiceTests
     }
 
     [Fact]
+    public async Task ConvertPendingAsync_PreservesConcurrentDestinationWhenPublishCollides()
+    {
+        using var folder = new TemporaryFolder();
+        var sourcePath = Path.Combine(folder.Path, "source.txt");
+        var destinationPath = Path.ChangeExtension(sourcePath, ".md");
+        File.WriteAllText(sourcePath, "source");
+        var context = CreateContext(folder.Path);
+        var runner = new StubRunner((_, stagedOutputPath) =>
+        {
+            File.WriteAllText(stagedOutputPath, "converted");
+            // Simulate an editor creating the final note after discovery but before publication.
+            File.WriteAllText(destinationPath, "concurrent note");
+            return SuccessResult();
+        });
+
+        var result = await new DocumentConversionService(
+            runner,
+            new DocumentConversionLog(context.ConfigurationDirectory),
+            new DocumentConversionOptions()).ConvertPendingAsync(context);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(0, result.Converted);
+        Assert.Equal(1, result.Failures);
+        Assert.Equal("concurrent note", File.ReadAllText(destinationPath));
+        Assert.Empty(Directory.EnumerateDirectories(folder.Path, ".notemanager-doc2md-*"));
+    }
+
+    [Fact]
+    public async Task ConvertPendingAsync_PreservesConcurrentDestinationAndUnrelatedTempAfterTimeout()
+    {
+        using var folder = new TemporaryFolder();
+        var sourcePath = Path.Combine(folder.Path, "source.txt");
+        var destinationPath = Path.ChangeExtension(sourcePath, ".md");
+        var unrelatedTemporaryOutput = Path.Combine(
+            folder.Path,
+            $".doc2md-{Guid.NewGuid():N}.tmp");
+        File.WriteAllText(sourcePath, "source");
+        var context = CreateContext(folder.Path);
+        var runner = new StubRunner((_, _) =>
+        {
+            // Simulate a writer that arrives while a timed-out converter is being cleaned up.
+            File.WriteAllText(destinationPath, "concurrent note");
+            File.WriteAllText(unrelatedTemporaryOutput, "unrelated");
+            return TimedOutResult();
+        });
+
+        var result = await new DocumentConversionService(
+            runner,
+            new DocumentConversionLog(context.ConfigurationDirectory),
+            new DocumentConversionOptions()).ConvertPendingAsync(context);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(1, result.Failures);
+        Assert.Equal("concurrent note", File.ReadAllText(destinationPath));
+        Assert.True(File.Exists(unrelatedTemporaryOutput));
+        Assert.Empty(Directory.EnumerateDirectories(folder.Path, ".notemanager-doc2md-*"));
+    }
+
+    [Fact]
+    public async Task ConvertPendingAsync_CleansStagedOutputAfterCancellation()
+    {
+        using var folder = new TemporaryFolder();
+        var sourcePath = Path.Combine(folder.Path, "source.txt");
+        var destinationPath = Path.ChangeExtension(sourcePath, ".md");
+        File.WriteAllText(sourcePath, "source");
+        var context = CreateContext(folder.Path);
+        var runner = new StubRunner((_, stagedOutputPath) =>
+        {
+            File.WriteAllText(stagedOutputPath, "converted");
+            // The cancellation result arrives after DOC2MD has successfully staged its output.
+            return CancelledResult();
+        });
+
+        var result = await new DocumentConversionService(
+            runner,
+            new DocumentConversionLog(context.ConfigurationDirectory),
+            new DocumentConversionOptions()).ConvertPendingAsync(context);
+
+        Assert.True(result.Skipped);
+        Assert.False(File.Exists(destinationPath));
+        Assert.Empty(Directory.EnumerateDirectories(folder.Path, ".notemanager-doc2md-*"));
+    }
+
+    [Fact]
     public void FindPendingDocuments_OrdersNewestFirstAndPrefersModernSource()
     {
         using var folder = new TemporaryFolder();
@@ -108,6 +193,24 @@ public sealed class DocumentConversionServiceTests
         Assert.Equal(2, pending.Count);
         Assert.Equal(sharedModern, pending[0].InputPath);
         Assert.Equal(oldText, pending[1].InputPath);
+    }
+
+    [Fact]
+    public void FindPendingDocuments_ExcludesTildePrefixedWordTemporaryFiles()
+    {
+        using var folder = new TemporaryFolder();
+        var temporaryWordFile = Path.Combine(folder.Path, "~$meeting.docx");
+        var document = Path.Combine(folder.Path, "meeting.docx");
+        File.WriteAllText(temporaryWordFile, "Word owner metadata");
+        File.WriteAllText(document, "meeting notes");
+
+        // The scan must pass only a real document to the converter, never Word's transient owner file.
+        var pending = DocumentConversionService.FindPendingDocuments(
+            folder.Path,
+            recursive: true);
+
+        Assert.Single(pending);
+        Assert.Equal(document, pending[0].InputPath);
     }
 
     [Fact]
@@ -186,6 +289,26 @@ public sealed class DocumentConversionServiceTests
             "conversion failed",
             TimeSpan.FromSeconds(1),
             false,
+            false);
+
+    // This result isolates timeout cleanup behavior without requiring a real external converter process.
+    private static Doc2MdProcessResult TimedOutResult() =>
+        new(
+            -1,
+            string.Empty,
+            "conversion timed out",
+            TimeSpan.FromMinutes(1),
+            false,
+            true);
+
+    // This result exercises cleanup after a converter has produced a private staged output.
+    private static Doc2MdProcessResult CancelledResult() =>
+        new(
+            -1,
+            string.Empty,
+            "conversion cancelled",
+            TimeSpan.FromMinutes(1),
+            true,
             false);
 
     private sealed class StubRunner(
