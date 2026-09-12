@@ -30,6 +30,28 @@ public sealed class InfostackerPublishingServiceTests
     }
 
     [Fact]
+    public async Task PublishAsync_MovesExistingOriginalPdfEmbedAfterLaterEditsWithoutRewritingTheNote()
+    {
+        using var vault = new TestVault();
+        const string source = "# Current Markdown\n\n![[Report.pdf]]\n\n## Later edits\n\nThese notes came later.";
+        var notePath = vault.Write("Report.md", source);
+        vault.Write("Report.pdf", "original pdf");
+        var handler = new CapturingHandler();
+        using var client = new HttpClient(handler);
+        var service = new InfostackerPublishingService(client, new Uri("https://example.test/"));
+
+        await service.PublishAsync(CreateNote(notePath), vault.Path);
+
+        var published = Assert.IsType<string>(handler.RequestBody);
+        var laterEditsIndex = published.IndexOf("These notes came later.", StringComparison.Ordinal);
+        var originalEmbedIndex = published.IndexOf("![[Report.pdf]]", StringComparison.Ordinal);
+        Assert.True(laterEditsIndex >= 0);
+        Assert.True(originalEmbedIndex > laterEditsIndex);
+        Assert.Equal(1, published.Split("![[Report.pdf]]", StringSplitOptions.None).Length - 1);
+        Assert.Equal(source, File.ReadAllText(notePath));
+    }
+
+    [Fact]
     public async Task PublishAsync_MissingExplicitPdf_BlocksBeforeSendingTheRequest()
     {
         using var vault = new TestVault();

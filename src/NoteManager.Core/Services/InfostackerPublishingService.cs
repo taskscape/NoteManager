@@ -221,6 +221,10 @@ public sealed partial class InfostackerPublishingService
     {
         var attachments = new List<PublicationAttachment>();
         var resolvedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var originalPdfPaths = FindOriginalPdfPaths(notePath, rootPath).ToArray();
+        var originalPdfPathSet = new HashSet<string>(
+            originalPdfPaths,
+            StringComparer.OrdinalIgnoreCase);
 
         foreach (Match match in AttachmentEmbedRegex().Matches(source))
         {
@@ -259,29 +263,46 @@ public sealed partial class InfostackerPublishingService
             }
         }
 
-        var implicitEmbeds = new List<string>();
-        foreach (var originalPdfPath in FindOriginalPdfPaths(notePath, rootPath))
+        var originalEmbeds = new List<string>();
+        foreach (var originalPdfPath in originalPdfPaths)
         {
-            if (!resolvedPaths.Add(originalPdfPath))
+            if (resolvedPaths.Add(originalPdfPath))
             {
-                continue;
+                attachments.Add(new PublicationAttachment(
+                    Path.GetFileName(originalPdfPath),
+                    originalPdfPath,
+                    IsPdf: true,
+                    IsImplicit: true,
+                    Issue: null));
             }
 
-            attachments.Add(new PublicationAttachment(
-                Path.GetFileName(originalPdfPath),
-                originalPdfPath,
-                IsPdf: true,
-                IsImplicit: true,
-                Issue: null));
-            implicitEmbeds.Add($"![[{EscapeEmbedTarget(Path.GetRelativePath(
+            originalEmbeds.Add($"![[{EscapeEmbedTarget(Path.GetRelativePath(
                 Path.GetDirectoryName(notePath)!,
                 originalPdfPath))}]]");
         }
 
-        var markdown = implicitEmbeds.Count == 0
+        var markdown = originalEmbeds.Count == 0
             ? source
-            : $"{source.TrimEnd()}\n\n{string.Join(Environment.NewLine, implicitEmbeds)}";
+            : $"{RemoveOriginalPdfEmbeds(source, notePath, rootPath, originalPdfPathSet).TrimEnd()}\n\n{string.Join(Environment.NewLine, originalEmbeds)}";
         return new PreparedPublication(markdown, attachments);
+    }
+
+    private static string RemoveOriginalPdfEmbeds(
+        string source,
+        string notePath,
+        string rootPath,
+        HashSet<string> originalPdfPaths)
+    {
+        return AttachmentEmbedRegex().Replace(source, match =>
+        {
+            var target = NormalizeAttachmentTarget(match.Groups["target"].Value);
+            var resolvedPath = target.Length == 0
+                ? null
+                : ResolveExplicitAttachment(target, notePath, rootPath);
+            return resolvedPath is not null && originalPdfPaths.Contains(resolvedPath)
+                ? string.Empty
+                : match.Value;
+        });
     }
 
     private static void EnsureReferencedPdfsAreAvailable(
