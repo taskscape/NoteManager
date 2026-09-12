@@ -26,28 +26,36 @@ public partial class ShareDialog : Window
 
     private async void Publish_OnClick(object? sender, RoutedEventArgs e)
     {
-        var publicUrl = await ViewModel.PublishSelectedNoteAsync();
-        if (publicUrl is null)
-        {
-            return;
-        }
-
-        var clipboard = TopLevel.GetTopLevel(this)?.Clipboard;
-        if (clipboard is null)
-        {
-            ViewModel.ReportClipboardFailure("The system clipboard is unavailable.");
-            return;
-        }
-
         try
         {
-            await clipboard.SetTextAsync(publicUrl);
-            ViewModel.ConfirmPublicLinkCopied(publicUrl);
+            var publicUrl = await ViewModel.PublishSelectedNoteAsync();
+            if (publicUrl is null)
+            {
+                return;
+            }
+
+            var clipboard = TopLevel.GetTopLevel(this)?.Clipboard;
+            if (clipboard is null)
+            {
+                ViewModel.ReportClipboardFailure("The system clipboard is unavailable.");
+                return;
+            }
+
+            try
+            {
+                await clipboard.SetTextAsync(publicUrl);
+                ViewModel.ConfirmPublicLinkCopied(publicUrl);
+            }
+            catch (Exception exception)
+            {
+                // Pass the exception so the application log retains its complete clipboard failure details.
+                ViewModel.ReportClipboardFailure(exception.Message, exception);
+            }
         }
         catch (Exception exception)
         {
-            // Pass the exception so the application log retains its complete clipboard failure details.
-            ViewModel.ReportClipboardFailure(exception.Message, exception);
+            // Async event handlers cannot return faults to their caller, so contain unexpected upload failures here.
+            ViewModel.ReportUnexpectedPublishingFailure(exception);
         }
     }
 

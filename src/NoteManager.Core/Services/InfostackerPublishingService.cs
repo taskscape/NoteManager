@@ -156,7 +156,9 @@ public sealed partial class InfostackerPublishingService
             using var document = await JsonDocument.ParseAsync(
                 responseStream,
                 cancellationToken: cancellationToken).ConfigureAwait(false);
-            if (!document.RootElement.TryGetProperty("id", out var idElement)
+            // The sharing protocol requires an object response; JsonElement property access throws for valid scalar JSON.
+            if (document.RootElement.ValueKind != JsonValueKind.Object
+                || !document.RootElement.TryGetProperty("id", out var idElement)
                 || idElement.ValueKind != JsonValueKind.String
                 || string.IsNullOrWhiteSpace(idElement.GetString()))
             {

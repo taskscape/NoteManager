@@ -3,6 +3,7 @@ using System.Net.Http;
 using System.Text;
 using NoteManager.App.Models;
 using NoteManager.App.Services;
+using NoteManager.App.ViewModels;
 using Xunit;
 
 namespace NoteManager.App.Tests;
@@ -10,6 +11,20 @@ namespace NoteManager.App.Tests;
 [Trait("Category", "Unit")]
 public sealed class InfostackerPublishingServiceTests
 {
+    // These valid JSON values violate the publishing response contract in distinct ways and must remain recoverable.
+    public static TheoryData<string> InvalidPublishingResponses => new()
+    {
+        "[]",
+        "null",
+        "\"not-an-object\"",
+        "42",
+        "true",
+        "{}",
+        "{\"id\":42}",
+        "{\"id\":\"\"}",
+        "{"
+    };
+
     [Fact]
     public async Task PublishAsync_AppendsSiblingOriginalPdfToCurrentMarkdownAndUploadsIt()
     {
@@ -103,6 +118,56 @@ public sealed class InfostackerPublishingServiceTests
         Assert.Equal("Report.pdf", attachment.FileName);
     }
 
+    [Theory]
+    [MemberData(nameof(InvalidPublishingResponses))]
+    public async Task PublishAsync_InvalidPublishingResponse_ThrowsHandledPublishingException(string responseBody)
+    {
+        using var vault = new TestVault();
+        var notePath = vault.Write("Report.md", "# Draft");
+        var handler = new CapturingHandler(responseBody);
+        using var client = new HttpClient(handler);
+        var service = new InfostackerPublishingService(client, new Uri("https://example.test/"));
+
+        // Each malformed protocol payload must be converted to the recoverable exception consumed by the UI.
+        var exception = await Assert.ThrowsAsync<InfostackerPublishingException>(
+            () => service.PublishAsync(CreateNote(notePath), vault.Path));
+
+        Assert.NotNull(exception);
+        Assert.Equal(1, handler.RequestCount);
+    }
+
+    [Fact]
+    public async Task PublishSelectedNoteAsync_InvalidPublishingResponse_IsHandledAndRetainsEditorContent()
+    {
+        using var vault = new TestVault();
+        var notePath = vault.Write("Report.md", "# Initial draft");
+        var handler = new CapturingHandler("[]");
+        using var client = new HttpClient(handler);
+        var publishingService = new InfostackerPublishingService(client, new Uri("https://example.test/"));
+        var activityLog = new ApplicationActivityLog(vault.Path);
+        using var viewModel = new MainViewModel(publishingService, activityLog);
+        await viewModel.LoadMarkdownFolderAsync(vault.Path, notePath);
+        await WaitForIndexAsync(viewModel);
+        const string expectedContent = "# Updated draft\n\nContent that must remain available.";
+        viewModel.SelectedNote!.PlainTextContent = expectedContent;
+
+        // A bad response must surface as a normal publishing failure, not discard the in-memory editor content.
+        var publicUrl = await viewModel.PublishSelectedNoteAsync();
+
+        Assert.Null(publicUrl);
+        Assert.Equal(expectedContent, viewModel.SelectedNote.PlainTextContent);
+        Assert.Equal(expectedContent, File.ReadAllText(notePath));
+        Assert.Contains("invalid publishing response", viewModel.ShareStatusText, StringComparison.OrdinalIgnoreCase);
+        Assert.False(viewModel.IsPublishing);
+        // The view model must retain the protocol failure details for support without escalating it to the dispatcher.
+        var logPath = Path.Combine(
+            vault.Path,
+            $"{ApplicationActivityLog.LogFilePrefix}{DateTime.Today:yyyy-MM-dd}.log");
+        var logContents = File.ReadAllText(logPath);
+        Assert.Contains("Operation failed (Publishing a public link):", logContents);
+        Assert.Contains(nameof(InfostackerPublishingException), logContents);
+    }
+
     private static NoteItem CreateNote(string path) => new()
     {
         Title = Path.GetFileName(path),
@@ -124,7 +189,19 @@ public sealed class InfostackerPublishingServiceTests
         SourceFilePath = path
     };
 
-    private sealed class CapturingHandler : HttpMessageHandler
+    private static async Task WaitForIndexAsync(MainViewModel viewModel)
+    {
+        // Publishing schedules indexing after saving, so wait before the temporary vault is deleted.
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (viewModel.IsIndexing && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(25);
+        }
+
+        Assert.False(viewModel.IsIndexing);
+    }
+
+    private sealed class CapturingHandler(string responseBody = "{\"id\":\"public-note\"}") : HttpMessageHandler
     {
         public int RequestCount { get; private set; }
         public string? RequestBody { get; private set; }
@@ -139,7 +216,8 @@ public sealed class InfostackerPublishingServiceTests
                 : await request.Content.ReadAsStringAsync(cancellationToken);
             return new HttpResponseMessage(HttpStatusCode.OK)
             {
-                Content = new StringContent("{\"id\":\"public-note\"}", Encoding.UTF8, "application/json")
+                // A configurable response body makes protocol-shape regressions testable without a live service.
+                Content = new StringContent(responseBody, Encoding.UTF8, "application/json")
             };
         }
     }
@@ -168,7 +246,19 @@ public sealed class InfostackerPublishingServiceTests
 
         public void Dispose()
         {
-            Directory.Delete(Path, recursive: true);
+            // Folder indexing can release SQLite's file handle just after the view model reports completion on Windows.
+            for (var attempt = 0; attempt < 20; attempt++)
+            {
+                try
+                {
+                    Directory.Delete(Path, recursive: true);
+                    return;
+                }
+                catch (IOException) when (attempt < 19)
+                {
+                    Thread.Sleep(50);
+                }
+            }
         }
     }
 }

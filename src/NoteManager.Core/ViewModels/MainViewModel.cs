@@ -1268,6 +1268,20 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         SetStatus("Note published, but copying the public link failed");
     }
 
+    /// <summary>
+    /// Records an unexpected desktop publishing failure so an async UI event
+    /// handler can keep the editor usable instead of forwarding it to the dispatcher.
+    /// </summary>
+    public void ReportUnexpectedPublishingFailure(Exception exception)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
+
+        // Preserve diagnostic detail in the activity log while keeping the status safe and actionable for the user.
+        _activityLog.TryWriteOperationFailure("Publishing a public link", exception);
+        ShareStatusText = "Publishing failed unexpectedly. Your note remains available for editing.";
+        SetStatus("Publishing failed unexpectedly; the note remains available for editing.");
+    }
+
     private static string CreateEmptyMarkdownFile(string folderPath)
     {
         for (var suffix = 0; suffix <= 10_000; suffix++)
