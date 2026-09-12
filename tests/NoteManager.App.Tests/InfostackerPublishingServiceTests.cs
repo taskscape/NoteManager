@@ -83,19 +83,138 @@ public sealed class InfostackerPublishingServiceTests
     }
 
     [Fact]
-    public async Task PublishAsync_ExplicitPdfDoesNotSelectSameNamedFileFromAnotherFolder()
+    public async Task PublishAsync_BarePdfWithUniqueVaultWideMatch_UploadsThePreviewedFile()
     {
         using var vault = new TestVault();
         var notePath = vault.Write("notes/Report.md", "![[appendix.pdf]]");
-        vault.Write("unrelated/appendix.pdf", "wrong document");
+        var expectedPath = vault.Write("assets/appendix.pdf", "the uniquely matched document");
         var handler = new CapturingHandler();
         using var client = new HttpClient(handler);
         var service = new InfostackerPublishingService(client, new Uri("https://example.test/"));
 
-        await Assert.ThrowsAsync<InfostackerPublishingException>(
+        // A unique nested basename follows the same shared policy in the editor, preview, and final upload.
+        var editorReference = Assert.Single(MarkdownFolderService.LoadFolder(vault.Path).Notes
+            .Single(note => note.SourceFilePath == notePath)
+            .EmbeddedMediaReferences);
+        var previewAttachment = Assert.Single(service.PreviewAttachments(
+            CreateNote(notePath),
+            vault.Path,
+            File.ReadAllText(notePath)));
+        await service.PublishAsync(CreateNote(notePath), vault.Path);
+
+        Assert.Equal(expectedPath, editorReference.ResolvedPath);
+        Assert.Equal(expectedPath, previewAttachment.ResolvedPath);
+        Assert.True(previewAttachment.IsAvailable);
+        Assert.Equal(1, handler.RequestCount);
+        Assert.Contains("the uniquely matched document", handler.RequestBody);
+    }
+
+    /// <summary>
+    /// Confirms root-qualified and note-qualified links retain their authored
+    /// precedence while using the same resolver in preview and publication.
+    /// </summary>
+    [Theory]
+    [InlineData("notes/Report.md", "assets/root.pdf", "assets/root.pdf")]
+    [InlineData("notes/Report.md", "./note.pdf", "notes/note.pdf")]
+    public async Task PublishAsync_QualifiedPdfLink_UploadsTheFileSelectedByEditorAndPreview(
+        string noteRelativePath,
+        string target,
+        string attachmentRelativePath)
+    {
+        using var vault = new TestVault();
+        var notePath = vault.Write(noteRelativePath, $"![[{target}]]");
+        var expectedPath = vault.Write(attachmentRelativePath, $"contents of {attachmentRelativePath}");
+        var handler = new CapturingHandler();
+        using var client = new HttpClient(handler);
+        var service = new InfostackerPublishingService(client, new Uri("https://example.test/"));
+
+        var editorReference = Assert.Single(MarkdownFolderService.LoadFolder(vault.Path).Notes
+            .Single(note => note.SourceFilePath == notePath)
+            .EmbeddedMediaReferences);
+        var previewAttachment = Assert.Single(service.PreviewAttachments(
+            CreateNote(notePath),
+            vault.Path,
+            File.ReadAllText(notePath)));
+        await service.PublishAsync(CreateNote(notePath), vault.Path);
+
+        Assert.Equal(expectedPath, editorReference.ResolvedPath);
+        Assert.Equal(expectedPath, previewAttachment.ResolvedPath);
+        Assert.True(previewAttachment.IsAvailable);
+        Assert.Equal(1, handler.RequestCount);
+        Assert.Contains($"contents of {attachmentRelativePath}", handler.RequestBody);
+    }
+
+    /// <summary>
+    /// Ensures ambiguous bare basenames remain unavailable on every surface and
+    /// give the author an explicit path correction instead of selecting a file.
+    /// </summary>
+    [Fact]
+    public async Task PublishAsync_AmbiguousBarePdf_RejectsItWithAnExplicitPathCorrection()
+    {
+        using var vault = new TestVault();
+        var notePath = vault.Write("Report.md", "![[duplicate.pdf]]");
+        vault.Write("assets/duplicate.pdf", "first");
+        vault.Write("archive/duplicate.pdf", "second");
+        var handler = new CapturingHandler();
+        using var client = new HttpClient(handler);
+        var service = new InfostackerPublishingService(client, new Uri("https://example.test/"));
+
+        var editorReference = Assert.Single(MarkdownFolderService.LoadFolder(vault.Path).Notes
+            .Single(note => note.SourceFilePath == notePath)
+            .EmbeddedMediaReferences);
+        var previewAttachment = Assert.Single(service.PreviewAttachments(
+            CreateNote(notePath),
+            vault.Path,
+            File.ReadAllText(notePath)));
+        var exception = await Assert.ThrowsAsync<InfostackerPublishingException>(
             () => service.PublishAsync(CreateNote(notePath), vault.Path));
 
+        Assert.False(File.Exists(editorReference.ResolvedPath));
+        Assert.False(previewAttachment.IsAvailable);
+        Assert.Contains("ambiguous", previewAttachment.Issue, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("explicit vault-relative or note-relative path", exception.Message);
         Assert.Equal(0, handler.RequestCount);
+    }
+
+    /// <summary>
+    /// Prevents a relative traversal from previewing or publishing a PDF that
+    /// lives outside the selected vault, with a correction shown to the author.
+    /// </summary>
+    [Fact]
+    public async Task PublishAsync_OutsideVaultPdf_RejectsItWithAVaultBoundedCorrection()
+    {
+        using var vault = new TestVault();
+        var outsideFileName = $"outside-{Guid.NewGuid():N}.pdf";
+        var outsidePath = Path.Combine(Path.GetDirectoryName(vault.Path)!, outsideFileName);
+        File.WriteAllText(outsidePath, "external document");
+        try
+        {
+            var notePath = vault.Write("Report.md", $"![[../{outsideFileName}]]");
+            var handler = new CapturingHandler();
+            using var client = new HttpClient(handler);
+            var service = new InfostackerPublishingService(client, new Uri("https://example.test/"));
+
+            var editorReference = Assert.Single(MarkdownFolderService.LoadFolder(vault.Path).Notes
+                .Single(note => note.SourceFilePath == notePath)
+                .EmbeddedMediaReferences);
+            var previewAttachment = Assert.Single(service.PreviewAttachments(
+                CreateNote(notePath),
+                vault.Path,
+                File.ReadAllText(notePath)));
+            var exception = await Assert.ThrowsAsync<InfostackerPublishingException>(
+                () => service.PublishAsync(CreateNote(notePath), vault.Path));
+
+            Assert.False(File.Exists(editorReference.ResolvedPath));
+            Assert.False(previewAttachment.IsAvailable);
+            Assert.Contains("outside the current folder", previewAttachment.Issue);
+            Assert.Contains("move it into the folder", exception.Message);
+            Assert.Equal(0, handler.RequestCount);
+        }
+        finally
+        {
+            // The external fixture is deliberately separate from the vault, so clean it up explicitly after verification.
+            File.Delete(outsidePath);
+        }
     }
 
     [Fact]

@@ -5,19 +5,17 @@ namespace NoteManager.App.Services;
 public sealed class EmbeddedMediaVaultIndex
 {
     private readonly string _rootFolder;
-    private readonly IReadOnlyDictionary<string, string> _relativePaths;
-    private readonly IReadOnlyDictionary<string, string[]> _fileNames;
+    // Keep the indexed media snapshot so viewer resolution shares its candidate set with publication.
+    private readonly IReadOnlyList<string> _mediaPaths;
     private readonly IReadOnlyDictionary<string, string[]> _filesByFolder;
 
     private EmbeddedMediaVaultIndex(
         string rootFolder,
-        IReadOnlyDictionary<string, string> relativePaths,
-        IReadOnlyDictionary<string, string[]> fileNames,
+        IReadOnlyList<string> mediaPaths,
         IReadOnlyDictionary<string, string[]> filesByFolder)
     {
         _rootFolder = rootFolder;
-        _relativePaths = relativePaths;
-        _fileNames = fileNames;
+        _mediaPaths = mediaPaths;
         _filesByFolder = filesByFolder;
     }
 
@@ -35,20 +33,6 @@ public sealed class EmbeddedMediaVaultIndex
             .Where(path => EmbeddedMediaReference.TryGetKind(path, out _))
             .ToArray();
 
-        var relativePaths = mediaPaths
-            .GroupBy(
-                path => NormalizeLinkPath(Path.GetRelativePath(rootFolder, path)),
-                StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(
-                group => group.Key,
-                group => group.First(),
-                StringComparer.OrdinalIgnoreCase);
-        var fileNames = mediaPaths
-            .GroupBy(path => Path.GetFileName(path) ?? string.Empty, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(
-                group => group.Key,
-                group => group.ToArray(),
-                StringComparer.OrdinalIgnoreCase);
         // Grouping the snapshot by folder avoids enumerating the same directory
         // once per Markdown note when a conversion output contains many notes.
         var filesByFolder = allPaths
@@ -62,8 +46,7 @@ public sealed class EmbeddedMediaVaultIndex
 
         return new EmbeddedMediaVaultIndex(
             rootFolder,
-            relativePaths,
-            fileNames,
+            mediaPaths,
             filesByFolder);
     }
 
@@ -184,66 +167,13 @@ public sealed class EmbeddedMediaVaultIndex
 
     private string ResolveCore(string rawTarget, string markdownFilePath)
     {
-        var target = Uri.UnescapeDataString(rawTarget.Trim().Trim('<', '>', '"', '\''));
-        var windowsTarget = target.Replace('/', Path.DirectorySeparatorChar);
-
-        if (Path.IsPathRooted(windowsTarget))
-        {
-            return Path.GetFullPath(windowsTarget);
-        }
-
-        var noteFolder = Path.GetDirectoryName(markdownFilePath) ?? _rootFolder;
-        var isExplicitRelative = target.StartsWith("./", StringComparison.Ordinal)
-                                 || target.StartsWith("../", StringComparison.Ordinal)
-                                 || target.StartsWith(@".\", StringComparison.Ordinal)
-                                 || target.StartsWith(@"..\", StringComparison.Ordinal);
-        var containsFolder = target.Contains('/') || target.Contains('\\');
-        var noteRelative = Path.GetFullPath(Path.Combine(noteFolder, windowsTarget));
-        var vaultRelative = Path.GetFullPath(Path.Combine(_rootFolder, windowsTarget));
-
-        if (isExplicitRelative)
-        {
-            return noteRelative;
-        }
-
-        if (!containsFolder && File.Exists(noteRelative))
-        {
-            return noteRelative;
-        }
-
-        var normalizedTarget = NormalizeLinkPath(target);
-        if (_relativePaths.TryGetValue(normalizedTarget, out var indexedVaultPath))
-        {
-            return indexedVaultPath;
-        }
-
-        if (File.Exists(vaultRelative))
-        {
-            return vaultRelative;
-        }
-
-        var fileName = Path.GetFileName(windowsTarget);
-        if (_fileNames.TryGetValue(fileName, out var matches))
-        {
-            return matches
-                .OrderBy(path => RelativeDistance(noteFolder, Path.GetDirectoryName(path) ?? _rootFolder))
-                .ThenBy(path => path, StringComparer.OrdinalIgnoreCase)
-                .First();
-        }
-
-        return containsFolder ? vaultRelative : noteRelative;
-    }
-
-    private static string NormalizeLinkPath(string path)
-        => path.Replace('\\', '/').TrimStart('/');
-
-    private static int RelativeDistance(string fromFolder, string toFolder)
-    {
-        var relative = Path.GetRelativePath(fromFolder, toFolder);
-        return relative
-            .Split(
-                new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar },
-                StringSplitOptions.RemoveEmptyEntries)
-            .Length;
+        var target = ObsidianEmbedTarget.GetLiteralPath(rawTarget);
+        var resolution = VaultAttachmentResolutionPolicy.Resolve(
+            target,
+            markdownFilePath,
+            _rootFolder,
+            _mediaPaths);
+        // Preserve unresolved text for the viewer while the shared policy prevents external or ambiguous files loading.
+        return resolution.ResolvedPath ?? target;
     }
 }

@@ -340,6 +340,66 @@ public sealed class DocumentConversionServiceTests
             StringComparison.Ordinal));
     }
 
+    [Theory]
+    [InlineData("[]")]
+    [InlineData("true")]
+    [InlineData("null")]
+    [InlineData("{}")]
+    [InlineData("{ \"succeeded\": true }")]
+    [InlineData("{ \"skipped\": false }")]
+    [InlineData("{ \"succeeded\": \"true\", \"skipped\": false }")]
+    [InlineData("{ \"succeeded\": true, \"skipped\": 0 }")]
+    [InlineData("{")]
+    public async Task ConvertPendingAsync_InvalidJsonResult_FailsOnlyItsDocumentAndContinues(
+        string invalidResult)
+    {
+        using var folder = new TemporaryFolder();
+        var invalidInput = Path.Combine(folder.Path, "invalid.txt");
+        var validInput = Path.Combine(folder.Path, "valid.txt");
+        File.WriteAllText(invalidInput, "invalid");
+        File.WriteAllText(validInput, "valid");
+        File.SetLastWriteTimeUtc(invalidInput, DateTime.UtcNow);
+        File.SetLastWriteTimeUtc(validInput, DateTime.UtcNow.AddMinutes(-1));
+        var refreshCount = 0;
+        var statuses = new List<string>();
+        var context = CreateContext(
+            folder.Path,
+            statuses.Add,
+            _ =>
+            {
+                refreshCount++;
+                return Task.CompletedTask;
+            });
+        var runner = new StubRunner((input, output) =>
+        {
+            if (Path.GetFileName(input).Equals("invalid.txt", StringComparison.OrdinalIgnoreCase))
+            {
+                File.WriteAllText(output, "partial");
+                return SuccessfulProcessResult(invalidResult);
+            }
+
+            File.WriteAllText(output, "converted");
+            return SuccessResult();
+        });
+
+        var result = await new DocumentConversionService(
+            runner,
+            new DocumentConversionLog(context.ConfigurationDirectory),
+            new DocumentConversionOptions()).ConvertPendingAsync(context);
+
+        // A bad converter response must not publish its private partial output or halt later conversions.
+        Assert.False(result.Succeeded);
+        Assert.Equal(1, result.Converted);
+        Assert.Equal(1, result.Failures);
+        Assert.False(File.Exists(Path.ChangeExtension(invalidInput, ".md")));
+        Assert.Equal("converted", File.ReadAllText(Path.ChangeExtension(validInput, ".md")));
+        Assert.Empty(Directory.EnumerateDirectories(folder.Path, ".notemanager-doc2md-*"));
+        Assert.Equal(1, refreshCount);
+        Assert.Contains(statuses, status => status.Contains(
+            "invalid JSON result",
+            StringComparison.OrdinalIgnoreCase));
+    }
+
     private static PluginHostContext CreateContext(
         string vaultPath,
         Action<string>? reportStatus = null,
@@ -352,13 +412,11 @@ public sealed class DocumentConversionServiceTests
             RefreshDocumentsAsync: refreshDocumentsAsync);
 
     private static Doc2MdProcessResult SuccessResult() =>
-        new(
-            0,
-            """{ "succeeded": true, "exitCode": 0 }""",
-            string.Empty,
-            TimeSpan.FromSeconds(1),
-            false,
-            false);
+        SuccessfulProcessResult("""{ "succeeded": true, "skipped": false, "exitCode": 0 }""");
+
+    // This helper keeps synthetic protocol-success responses complete as the production boundary requires.
+    private static Doc2MdProcessResult SuccessfulProcessResult(string standardOutput) =>
+        new(0, standardOutput, string.Empty, TimeSpan.FromSeconds(1), false, false);
 
     private static string StrictUtf8Text(byte[] bytes) =>
         new UTF8Encoding(false, true).GetString(bytes);
@@ -375,7 +433,7 @@ public sealed class DocumentConversionServiceTests
     private static Doc2MdProcessResult FailureResult() =>
         new(
             1,
-            """{ "succeeded": false, "exitCode": 1 }""",
+            """{ "succeeded": false, "skipped": false, "exitCode": 1 }""",
             "conversion failed",
             TimeSpan.FromSeconds(1),
             false,
@@ -384,7 +442,7 @@ public sealed class DocumentConversionServiceTests
     private static Doc2MdProcessResult PasswordProtectedPdfResult() =>
         new(
             1,
-            """{ "succeeded": false, "error": "The document was encrypted and none of the provided passwords were the user or owner password." }""",
+            """{ "succeeded": false, "skipped": false, "error": "The document was encrypted and none of the provided passwords were the user or owner password." }""",
             string.Empty,
             TimeSpan.FromSeconds(1),
             false,

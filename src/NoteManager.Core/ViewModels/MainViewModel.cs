@@ -1214,12 +1214,13 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         RefreshPublishAttachmentPreview();
         var missingPdfs = _publishAttachments
             .Where(attachment => attachment.IsPdf && !attachment.IsAvailable)
-            .Select(attachment => attachment.FileName)
+            // Surface the resolver's correction rather than calling an ambiguous or external target merely missing.
+            .Select(attachment => $"{attachment.FileName} — {attachment.Issue}")
             .ToArray();
         if (missingPdfs.Length > 0)
         {
             ShareStatusText =
-                "Cannot publish because these PDFs are referenced in Markdown but could not be found and included: "
+                "Cannot publish because these PDFs could not be included: "
                 + string.Join(", ", missingPdfs);
             SetStatus(ShareStatusText);
             return null;
@@ -1300,7 +1301,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
             ShareStatusText = _publishAttachments.Any(
                 attachment => attachment.IsPdf && !attachment.IsAvailable)
-                ? "A referenced PDF is missing. Publishing is blocked until it is restored or its embed is removed."
+                ? "A referenced PDF needs attention. Review its listed correction before publishing."
                 : PublishAttachmentSummary;
         }
         catch (Exception exception) when (

@@ -142,7 +142,7 @@ public sealed class DocumentConversionService(
                 {
                     failures++;
                     var detail = process.Succeeded
-                        ? "returned an unreadable JSON result"
+                        ? $"returned an invalid JSON result: {Bound(process.StandardOutput)}"
                         : $"failed with exit code {process.ExitCode}: {Bound(process.StandardError)}";
                     await LogItemFailureAsync(relativePath, detail);
                     continue;
@@ -445,11 +445,17 @@ public sealed class DocumentConversionService(
         {
             using var document = JsonDocument.Parse(standardOutput);
             var root = document.RootElement;
+            // DOC2MD is a protocol boundary: only an object with both boolean outcome flags may control publication.
+            if (root.ValueKind != JsonValueKind.Object
+                || !TryReadRequiredBoolean(root, "succeeded", out var succeeded)
+                || !TryReadRequiredBoolean(root, "skipped", out var skipped))
+            {
+                return false;
+            }
+
             result = new CliItemResult(
-                root.TryGetProperty("succeeded", out var succeeded)
-                && succeeded.ValueKind == JsonValueKind.True,
-                root.TryGetProperty("skipped", out var skipped)
-                && skipped.ValueKind == JsonValueKind.True,
+                succeeded,
+                skipped,
                 root.TryGetProperty("error", out var error)
                 && error.ValueKind == JsonValueKind.String
                     ? error.GetString()
@@ -460,6 +466,26 @@ public sealed class DocumentConversionService(
         {
             return false;
         }
+    }
+
+    private static bool TryReadRequiredBoolean(
+        JsonElement item,
+        string propertyName,
+        out bool value)
+    {
+        value = false;
+        if (!item.TryGetProperty(propertyName, out var property))
+        {
+            return false;
+        }
+
+        if (property.ValueKind == JsonValueKind.True)
+        {
+            value = true;
+            return true;
+        }
+
+        return property.ValueKind == JsonValueKind.False;
     }
 
     private async Task LogAndReportAsync(

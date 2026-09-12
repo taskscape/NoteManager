@@ -298,6 +298,8 @@ public sealed partial class InfostackerPublishingService
         string rootPath,
         string source)
     {
+        // Sharing enumerates the same vault snapshot policy as the editor so bare filenames cannot diverge by surface.
+        var vaultFilePaths = EnumerateVaultFiles(rootPath).ToArray();
         var attachments = new List<PublicationAttachment>();
         var resolvedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var originalPdfPaths = FindOriginalPdfPaths(notePath, rootPath).ToArray();
@@ -317,7 +319,12 @@ public sealed partial class InfostackerPublishingService
             var isPdf = Path.GetExtension(fileName).Equals(
                 ".pdf",
                 StringComparison.OrdinalIgnoreCase);
-            var resolvedPath = ResolveExplicitAttachment(target, notePath, rootPath);
+            var resolution = VaultAttachmentResolutionPolicy.Resolve(
+                target,
+                notePath,
+                rootPath,
+                vaultFilePaths);
+            var resolvedPath = resolution.ResolvedPath;
             if (resolvedPath is not null && resolvedPaths.Add(resolvedPath))
             {
                 attachments.Add(new PublicationAttachment(
@@ -337,8 +344,8 @@ public sealed partial class InfostackerPublishingService
                     IsPdf: isPdf,
                     IsImplicit: false,
                     isPdf
-                        ? "referenced in Markdown but not found inside the current folder"
-                        : "referenced in Markdown but not found and will not be included"));
+                        ? resolution.Issue
+                        : $"{resolution.Issue} and will not be included"));
             }
         }
 
@@ -362,7 +369,7 @@ public sealed partial class InfostackerPublishingService
 
         var markdown = originalEmbeds.Count == 0
             ? source
-            : $"{RemoveOriginalPdfEmbeds(source, notePath, rootPath, originalPdfPathSet).TrimEnd()}\n\n{string.Join(Environment.NewLine, originalEmbeds)}";
+            : $"{RemoveOriginalPdfEmbeds(source, notePath, rootPath, vaultFilePaths, originalPdfPathSet).TrimEnd()}\n\n{string.Join(Environment.NewLine, originalEmbeds)}";
         return new PreparedPublication(markdown, attachments);
     }
 
@@ -370,6 +377,7 @@ public sealed partial class InfostackerPublishingService
         string source,
         string notePath,
         string rootPath,
+        IEnumerable<string> vaultFilePaths,
         HashSet<string> originalPdfPaths)
     {
         return AttachmentEmbedRegex().Replace(source, match =>
@@ -377,7 +385,11 @@ public sealed partial class InfostackerPublishingService
             var target = ObsidianEmbedTarget.GetLiteralPath(match.Groups["target"].Value);
             var resolvedPath = target.Length == 0
                 ? null
-                : ResolveExplicitAttachment(target, notePath, rootPath);
+                : VaultAttachmentResolutionPolicy.Resolve(
+                    target,
+                    notePath,
+                    rootPath,
+                    vaultFilePaths).ResolvedPath;
             return resolvedPath is not null && originalPdfPaths.Contains(resolvedPath)
                 ? string.Empty
                 : match.Value;
@@ -389,53 +401,30 @@ public sealed partial class InfostackerPublishingService
     {
         var missingPdfs = attachments
             .Where(attachment => attachment.IsPdf && !attachment.IsAvailable)
-            .Select(attachment => attachment.FileName)
+            // Include resolver guidance so users can correct ambiguous or outside-vault embeds without guessing.
+            .Select(attachment => $"{attachment.FileName} — {attachment.Issue}")
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
         if (missingPdfs.Length > 0)
         {
             throw new InfostackerPublishingException(
-                "Cannot publish because these PDFs are referenced in Markdown but could not be found and included: "
+                "Cannot publish because these PDFs could not be included: "
                 + string.Join(", ", missingPdfs));
         }
     }
 
-    private static string? ResolveExplicitAttachment(
-        string target,
-        string notePath,
-        string rootPath)
+    private static IEnumerable<string> EnumerateVaultFiles(string rootPath)
     {
-        var windowsTarget = target.Replace('/', Path.DirectorySeparatorChar);
-        var noteFolder = Path.GetDirectoryName(notePath)!;
-        var isExplicitRelative = target.StartsWith("./", StringComparison.Ordinal)
-                                 || target.StartsWith("../", StringComparison.Ordinal)
-                                 || target.StartsWith(@".\", StringComparison.Ordinal)
-                                 || target.StartsWith(@"..\", StringComparison.Ordinal);
-        var hasFolder = target.Contains('/') || target.Contains('\\');
-        var candidate = isExplicitRelative
-            ? Path.GetFullPath(Path.Combine(noteFolder, windowsTarget))
-            : hasFolder
-                ? Path.GetFullPath(Path.Combine(rootPath, windowsTarget))
-                : Path.GetFullPath(Path.Combine(noteFolder, windowsTarget));
-
-        if (IsPathInsideRoot(candidate, rootPath) && File.Exists(candidate))
-        {
-            return candidate;
-        }
-
-        // A bare filename can deliberately refer to a file at the vault root;
-        // do not search every matching basename because that can select a PDF
-        // from an unrelated folder.
-        if (!hasFolder)
-        {
-            candidate = Path.GetFullPath(Path.Combine(rootPath, windowsTarget));
-            if (IsPathInsideRoot(candidate, rootPath) && File.Exists(candidate))
+        // Ignore inaccessible folders to match Markdown loading while retaining the root-bound search scope.
+        return Directory.EnumerateFiles(
+            rootPath,
+            "*",
+            new EnumerationOptions
             {
-                return candidate;
-            }
-        }
-
-        return null;
+                RecurseSubdirectories = true,
+                IgnoreInaccessible = true,
+                ReturnSpecialDirectories = false
+            });
     }
 
     private static IEnumerable<string> FindOriginalPdfPaths(string notePath, string rootPath)
