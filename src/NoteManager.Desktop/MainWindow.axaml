@@ -22,8 +22,10 @@
                   Command="{Binding NewNoteCommand}" />
         <MenuItem Header="_Open folder…"
                   Click="OpenFolder_OnClick" />
-        <MenuItem Header="_Import PDF…"
+        <MenuItem Header="_Import PDF into note…"
                   Click="ImportPdf_OnClick" />
+        <MenuItem Header="Import PDF _documents…"
+                  Click="ImportPdfDocuments_OnClick" />
         <Separator />
         <MenuItem Header="E_xit"
                   Click="Exit_OnClick" />

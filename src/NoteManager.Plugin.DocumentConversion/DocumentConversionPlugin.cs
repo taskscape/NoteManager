@@ -2,15 +2,19 @@ using NoteManager.Plugins;
 
 namespace NoteManager.Plugin.DocumentConversion;
 
-public sealed class DocumentConversionPlugin : INoteManagerPlugin
+public sealed class DocumentConversionPlugin : INoteManagerPlugin, IDocumentConversionTrigger
 {
     public const string DefaultCliExecutablePath =
         @"C:\Program Files\Taskscape\DOC2MD\DOC2MD.Cli.exe";
 
     private readonly SemaphoreSlim _lifecycleLock = new(1, 1);
+    private readonly SemaphoreSlim _conversionLock = new(1, 1);
     private readonly string _cliExecutablePath;
     private CancellationTokenSource? _cancellation;
     private Task? _scheduler;
+    private PluginHostContext? _context;
+    private DocumentConversionService? _service;
+    private DocumentConversionLog? _log;
 
     public DocumentConversionPlugin()
         : this(DefaultCliExecutablePath)
@@ -59,6 +63,9 @@ public sealed class DocumentConversionPlugin : INoteManagerPlugin
             var log = new DocumentConversionLog(context.ConfigurationDirectory);
             var runner = new Doc2MdProcessRunner(_cliExecutablePath, options);
             var service = new DocumentConversionService(runner, log, options);
+            _context = context;
+            _service = service;
+            _log = log;
             _cancellation = new CancellationTokenSource();
             _scheduler = RunSchedulerAsync(
                 context,
@@ -88,13 +95,38 @@ public sealed class DocumentConversionPlugin : INoteManagerPlugin
         }
     }
 
+    public async Task ConvertPendingDocumentsAsync(
+        CancellationToken cancellationToken = default)
+    {
+        PluginHostContext context;
+        DocumentConversionService service;
+        DocumentConversionLog log;
+        await _lifecycleLock.WaitAsync(cancellationToken);
+        try
+        {
+            context = _context ?? throw new InvalidOperationException(
+                "Document Conversion must be active before it can convert imported documents.");
+            service = _service ?? throw new InvalidOperationException(
+                "Document Conversion is not ready to process imported documents.");
+            log = _log ?? throw new InvalidOperationException(
+                "Document Conversion is not ready to report imported-document progress.");
+        }
+        finally
+        {
+            _lifecycleLock.Release();
+        }
+
+        await RunConversionAsync(context, service, log, cancellationToken);
+    }
+
     public async ValueTask DisposeAsync()
     {
         await StopAsync(CancellationToken.None);
         _lifecycleLock.Dispose();
+        _conversionLock.Dispose();
     }
 
-    private static async Task RunSchedulerAsync(
+    private async Task RunSchedulerAsync(
         PluginHostContext context,
         DocumentConversionOptions options,
         DocumentConversionService service,
@@ -103,12 +135,12 @@ public sealed class DocumentConversionPlugin : INoteManagerPlugin
     {
         try
         {
-            await RunCycleAsync(context, service, log, cancellationToken);
+            await RunConversionAsync(context, service, log, cancellationToken);
             using var timer = new PeriodicTimer(
                 TimeSpan.FromMinutes(options.IntervalMinutes));
             while (await timer.WaitForNextTickAsync(cancellationToken))
             {
-                await RunCycleAsync(context, service, log, cancellationToken);
+                await RunConversionAsync(context, service, log, cancellationToken);
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -147,6 +179,24 @@ public sealed class DocumentConversionPlugin : INoteManagerPlugin
         }
     }
 
+    private async Task RunConversionAsync(
+        PluginHostContext context,
+        DocumentConversionService service,
+        DocumentConversionLog log,
+        CancellationToken cancellationToken)
+    {
+        await _conversionLock.WaitAsync(cancellationToken);
+        try
+        {
+            // Manual imports and the scheduled scan must not race over the same pending files.
+            await RunCycleAsync(context, service, log, cancellationToken);
+        }
+        finally
+        {
+            _conversionLock.Release();
+        }
+    }
+
     private async Task StopCoreAsync(CancellationToken cancellationToken)
     {
         var cancellation = _cancellation;
@@ -170,6 +220,10 @@ public sealed class DocumentConversionPlugin : INoteManagerPlugin
         }
 
         cancellation?.Dispose();
+        // A stopped plugin must not accept an import-triggered conversion with its previous vault context.
+        _context = null;
+        _service = null;
+        _log = null;
     }
 
 }

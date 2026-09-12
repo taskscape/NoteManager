@@ -613,6 +613,69 @@ public sealed class MainViewModel : ObservableObject, IDisposable
            && IsFolderMode
            && IsMarkdownPathInCurrentFolder(note.SourceFilePath);
 
+    public bool CanImportPdfDocuments
+        => IsFolderMode && !string.IsNullOrWhiteSpace(CurrentFolderPath);
+
+    public async Task<ImportedPdf[]> ImportPdfDocumentsAsync(
+        IReadOnlyList<string> sourcePaths)
+    {
+        ArgumentNullException.ThrowIfNull(sourcePaths);
+
+        var pdfPaths = sourcePaths
+            .Where(path => File.Exists(path)
+                           && Path.GetExtension(path).Equals(
+                               ".pdf",
+                               StringComparison.OrdinalIgnoreCase))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (pdfPaths.Length == 0)
+        {
+            SetStatus("Select one or more PDF files to import as documents");
+            return [];
+        }
+
+        if (!CanImportPdfDocuments)
+        {
+            SetStatus("Open a Markdown folder before importing PDF documents");
+            return [];
+        }
+
+        var folderPath = CurrentFolderPath;
+        var folderGeneration = _folderGeneration;
+        SetStatus(
+            pdfPaths.Length == 1
+                ? $"Importing {Path.GetFileName(pdfPaths[0])} for conversion…"
+                : $"Importing {pdfPaths.Length:N0} PDF documents for conversion…");
+
+        try
+        {
+            // Do not create a Markdown embed here: the converter owns the new document's Markdown counterpart.
+            var importedPdfs = await Task.Run(
+                () => ImportPdfFiles(pdfPaths, folderPath, markdownFilePath: null));
+            if (folderGeneration != _folderGeneration)
+            {
+                DeleteCopiedImports(importedPdfs);
+                return [];
+            }
+
+            var copiedCount = importedPdfs.Count(pdf => pdf.WasCopied);
+            SetStatus(
+                copiedCount == 0
+                    ? $"Imported {importedPdfs.Length:N0} PDF document(s) for conversion"
+                    : $"Imported {importedPdfs.Length:N0} PDF document(s); {copiedCount:N0} copied to the folder root");
+            return importedPdfs;
+        }
+        catch (Exception exception) when (
+            exception is IOException
+            or UnauthorizedAccessException
+            or ArgumentException
+            or NotSupportedException)
+        {
+            SetStatus($"Could not import the PDF document: {exception.Message}");
+            return [];
+        }
+    }
+
     public async Task ImportPdfFilesAsync(
         NoteItem targetNote,
         IReadOnlyList<string> sourcePaths,
@@ -705,7 +768,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private static ImportedPdf[] ImportPdfFiles(
         IEnumerable<string> sourcePaths,
         string folderPath,
-        string markdownFilePath)
+        string? markdownFilePath)
     {
         var importedPdfs = new List<ImportedPdf>();
         try

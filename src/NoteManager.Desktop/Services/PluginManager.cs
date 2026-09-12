@@ -212,6 +212,32 @@ public sealed class PluginManager
         }
     }
 
+    public async Task<bool> TriggerDocumentConversionAsync(
+        CancellationToken cancellationToken = default)
+    {
+        await _lifecycleLock.WaitAsync(cancellationToken);
+        try
+        {
+            var converter = Plugins
+                .Where(plugin => plugin.IsRunning)
+                .Select(plugin => plugin.DiscoveredPlugin.Instance)
+                .OfType<IDocumentConversionTrigger>()
+                .FirstOrDefault();
+            if (converter is null)
+            {
+                return false;
+            }
+
+            // Reuse the active plugin so imports retain the configured converter and its status reporting.
+            await converter.ConvertPendingDocumentsAsync(cancellationToken);
+            return true;
+        }
+        finally
+        {
+            _lifecycleLock.Release();
+        }
+    }
+
     private async Task StartEntryAsync(
         PluginListItemViewModel entry,
         CancellationToken cancellationToken)

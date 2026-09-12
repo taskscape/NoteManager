@@ -133,6 +133,19 @@ public sealed class DocumentConversionService(
                 && item.Succeeded
                 && File.Exists(document.OutputPath))
             {
+                try
+                {
+                    AppendOriginalPdfEmbed(document);
+                }
+                catch (Exception exception) when (
+                    exception is IOException or UnauthorizedAccessException)
+                {
+                    failures++;
+                    CleanupFailedDocument(document.OutputPath, existingTemporaryOutputs);
+                    await LogItemFailureAsync(relativePath, exception.Message);
+                    continue;
+                }
+
                 converted++;
                 continue;
             }
@@ -246,6 +259,32 @@ public sealed class DocumentConversionService(
             // The individual conversion failure remains the primary outcome.
         }
     }
+
+    private static void AppendOriginalPdfEmbed(PendingDocument document)
+    {
+        if (!Path.GetExtension(document.InputPath)
+            .Equals(".pdf", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        var outputDirectory = Path.GetDirectoryName(document.OutputPath)!;
+        var sourcePath = Path.GetRelativePath(outputDirectory, document.InputPath)
+            .Replace(Path.DirectorySeparatorChar, '/');
+        var escapedSourcePath = EscapeEmbedTarget(sourcePath);
+
+        // Keep the source PDF discoverable from generated Markdown as its durable conversion relationship.
+        File.AppendAllText(
+            document.OutputPath,
+            $"{Environment.NewLine}{Environment.NewLine}![[{escapedSourcePath}]]");
+    }
+
+    private static string EscapeEmbedTarget(string relativePath) => relativePath
+        .Replace("%", "%25", StringComparison.Ordinal)
+        .Replace("#", "%23", StringComparison.Ordinal)
+        .Replace("|", "%7C", StringComparison.Ordinal)
+        .Replace("[", "%5B", StringComparison.Ordinal)
+        .Replace("]", "%5D", StringComparison.Ordinal);
 
     private static bool TryReadItemResult(
         string standardOutput,

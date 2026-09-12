@@ -65,6 +65,50 @@ public sealed class PdfDropImportViewModelTests
     }
 
     [Fact]
+    public async Task ImportPdfDocumentsAsync_ExternalPdf_CopiesWithoutChangingTheSelectedNote()
+    {
+        var testRoot = Path.Combine(
+            Path.GetTempPath(),
+            $"NoteManager.App.Tests.{Guid.NewGuid():N}");
+        var vaultRoot = Directory.CreateDirectory(
+            Path.Combine(testRoot, "vault")).FullName;
+        var outsideRoot = Directory.CreateDirectory(
+            Path.Combine(testRoot, "outside")).FullName;
+        var notePath = Path.Combine(vaultRoot, "plan.md");
+        var sourcePath = Path.Combine(outsideRoot, "Report.pdf");
+
+        File.WriteAllText(notePath, "# Existing plan");
+        File.WriteAllText(sourcePath, "dropped PDF");
+
+        using var viewModel = new MainViewModel();
+        try
+        {
+            await viewModel.LoadMarkdownFolderAsync(vaultRoot);
+            await WaitForIndexAsync(viewModel);
+            var selectedNote = Assert.Single(viewModel.NotesView);
+
+            var imported = await viewModel.ImportPdfDocumentsAsync([sourcePath]);
+
+            // Document imports leave the current Markdown untouched for the converter to create a separate counterpart.
+            var importedPdf = Assert.Single(imported);
+            Assert.True(importedPdf.WasCopied);
+            Assert.Equal(Path.Combine(vaultRoot, "Report.pdf"), importedPdf.DestinationPath);
+            Assert.Equal("# Existing plan", selectedNote.PlainTextContent);
+            Assert.Equal("# Existing plan", File.ReadAllText(notePath));
+            Assert.Contains("Imported 1 PDF document", viewModel.StatusText);
+        }
+        finally
+        {
+            viewModel.Dispose();
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(testRoot))
+            {
+                Directory.Delete(testRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public async Task EditingMarkdown_RefreshesMixedMediaPreviewsInEncounterOrder()
     {
         var testRoot = Path.Combine(

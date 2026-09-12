@@ -278,11 +278,6 @@ public partial class MainWindow : Window
 
     private async void ImportPdf_OnClick(object? sender, RoutedEventArgs e)
     {
-        if (_storagePickerOpen)
-        {
-            return;
-        }
-
         var note = ViewModel.SelectedNote;
         if (note is null || !ViewModel.CanImportPdfIntoNote(note))
         {
@@ -290,18 +285,51 @@ public partial class MainWindow : Window
             return;
         }
 
-        string[] paths;
+        var paths = await PickPdfPathsAsync("Import PDF into note");
+
+        if (paths.Length > 0)
+        {
+            await ViewModel.ImportPdfFilesAsync(
+                note,
+                paths,
+                MarkdownEditor.CaretIndex);
+        }
+    }
+
+    private async void ImportPdfDocuments_OnClick(object? sender, RoutedEventArgs e)
+    {
+        if (!ViewModel.CanImportPdfDocuments)
+        {
+            ViewModel.StatusText = "Open a Markdown folder before importing PDF documents";
+            return;
+        }
+
+        var paths = await PickPdfPathsAsync("Import PDF documents");
+        if (paths.Length > 0)
+        {
+            // This command deliberately creates converted notes instead of modifying the selected editor.
+            await ImportPdfDocumentsAsync(paths);
+        }
+    }
+
+    private async Task<string[]> PickPdfPathsAsync(string title)
+    {
+        if (_storagePickerOpen)
+        {
+            return [];
+        }
+
         _storagePickerOpen = true;
         try
         {
             var results = await StorageProvider.OpenFilePickerAsync(
                 new FilePickerOpenOptions
                 {
-                    Title = "Import PDF",
+                    Title = title,
                     AllowMultiple = true,
                     FileTypeFilter = [PdfFileType]
                 });
-            paths = results
+            return results
                 .Select(file => file.TryGetLocalPath())
                 .Where(path => !string.IsNullOrWhiteSpace(path))
                 .Cast<string>()
@@ -311,14 +339,30 @@ public partial class MainWindow : Window
         {
             _storagePickerOpen = false;
         }
+    }
 
-        if (paths.Length > 0)
+    private async Task ImportPdfDocumentsAsync(IReadOnlyList<string> paths)
+    {
+        var importedPdfs = await ViewModel.ImportPdfDocumentsAsync(paths);
+        if (importedPdfs.Length == 0)
         {
-            await ViewModel.ImportPdfFilesAsync(
-                note,
-                paths,
-                MarkdownEditor.CaretIndex);
+            return;
         }
+
+        if (!await _pluginManager.TriggerDocumentConversionAsync())
+        {
+            ViewModel.StatusText =
+                "PDF documents were imported. Activate Document Conversion to create their Markdown notes.";
+            return;
+        }
+
+        var convertedPath = importedPdfs
+            .Select(pdf => Path.ChangeExtension(pdf.DestinationPath, ".md"))
+            .FirstOrDefault(File.Exists);
+        // Reload only after the plugin returns so the note list and search index include completed outputs.
+        await ViewModel.LoadMarkdownFolderAsync(
+            ViewModel.CurrentFolderPath,
+            convertedPath);
     }
 
     private void MainWindow_OnDragOver(object? sender, DragEventArgs e)
@@ -330,7 +374,8 @@ public partial class MainWindow : Window
                              ".pdf",
                              StringComparison.OrdinalIgnoreCase)) == true;
         e.DragEffects = hasPdf
-                        && ViewModel.CanImportPdfIntoNote(ViewModel.SelectedNote)
+                        && (ViewModel.CanImportPdfIntoNote(ViewModel.SelectedNote)
+                            || ViewModel.CanImportPdfDocuments)
             ? DragDropEffects.Copy
             : DragDropEffects.None;
     }
@@ -347,20 +392,24 @@ public partial class MainWindow : Window
             .Cast<string>()
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray() ?? [];
-        if (note is null
-            || paths.Length == 0
-            || !ViewModel.CanImportPdfIntoNote(note))
+        if (paths.Length == 0)
         {
-            ViewModel.StatusText =
-                "Drop PDF files while a Markdown note is selected";
+            ViewModel.StatusText = "Drop one or more PDF files into NoteManager";
             return;
         }
 
         e.Handled = true;
-        await ViewModel.ImportPdfFilesAsync(
-            note,
-            paths,
-            MarkdownEditor.CaretIndex);
+        if (ViewModel.CanImportPdfIntoNote(note))
+        {
+            await ViewModel.ImportPdfFilesAsync(
+                note!,
+                paths,
+                MarkdownEditor.CaretIndex);
+            return;
+        }
+
+        // With no selected Markdown editor, a window drop imports documents for conversion.
+        await ImportPdfDocumentsAsync(paths);
     }
 
     private async void Tags_OnClick(object? sender, RoutedEventArgs e)

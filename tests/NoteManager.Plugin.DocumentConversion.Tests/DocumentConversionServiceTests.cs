@@ -54,6 +54,32 @@ public sealed class DocumentConversionServiceTests
     }
 
     [Fact]
+    public async Task ConvertPendingAsync_AppendsOriginalPdfEmbedAfterExtractedText()
+    {
+        using var folder = new TemporaryFolder();
+        var sourcePath = Path.Combine(folder.Path, "report.pdf");
+        File.WriteAllText(sourcePath, "original PDF");
+        var runner = new StubRunner((_, output) =>
+        {
+            File.WriteAllText(output, "Extracted PDF text");
+            return SuccessResult();
+        });
+        var context = CreateContext(folder.Path);
+
+        var result = await new DocumentConversionService(
+            runner,
+            new DocumentConversionLog(context.ConfigurationDirectory),
+            new DocumentConversionOptions()).ConvertPendingAsync(context);
+
+        // The embed persists the PDF-to-Markdown relationship for NoteManager's media viewer.
+        Assert.Equal(
+            $"Extracted PDF text{Environment.NewLine}{Environment.NewLine}![[report.pdf]]",
+            File.ReadAllText(Path.ChangeExtension(sourcePath, ".md")));
+        Assert.True(File.Exists(sourcePath));
+        Assert.Equal(1, result.Converted);
+    }
+
+    [Fact]
     public void FindPendingDocuments_OrdersNewestFirstAndPrefersModernSource()
     {
         using var folder = new TemporaryFolder();

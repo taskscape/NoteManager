@@ -11,6 +11,15 @@ public interface INoteManagerPlugin : IAsyncDisposable
     Task StopAsync(CancellationToken cancellationToken = default);
 }
 
+/// <summary>
+/// Lets the desktop request an immediate conversion after it imports a document.
+/// </summary>
+public interface IDocumentConversionTrigger
+{
+    Task ConvertPendingDocumentsAsync(
+        CancellationToken cancellationToken = default);
+}
+
 public sealed record PluginMetadata(
     string Id,
     string Name,

@@ -403,7 +403,9 @@ the newest first, and invokes DOC2MD once per document. A source is converted
 only when the sibling path produced by replacing its extension with `.md` does
 not already exist. The plugin never passes DOC2MD's `--overwrite` option, so an
 existing Markdown counterpart is not changed. A failure affects only that
-document; successful outputs from the same scan are preserved.
+document; successful outputs from the same scan are preserved. Generated
+Markdown from a PDF ends with an Obsidian embed of that original PDF, keeping
+the extracted text and source document connected.
 
 The generated `settings.json` uses recursive conversion, local PDF processing,
 and `eng+pol` OCR by default. Deactivate the plugin before editing that file,
