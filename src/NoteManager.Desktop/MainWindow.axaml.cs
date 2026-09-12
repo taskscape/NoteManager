@@ -448,6 +448,33 @@ public partial class MainWindow : Window
         }
     }
 
+    private void ReloadConflictNote_OnClick(object? sender, RoutedEventArgs e)
+        // The view model retains the draft until this deliberate reload action is invoked.
+        => ViewModel.TryReloadSelectedNoteAfterSaveConflict();
+
+    private void SaveMergedConflictDraft_OnClick(object? sender, RoutedEventArgs e)
+        // The user can edit the preserved draft with the displayed disk text before this revalidated save.
+        => ViewModel.TrySaveMergedConflictDraft();
+
+    private async void OverwriteConflictNote_OnClick(object? sender, RoutedEventArgs e)
+    {
+        var note = ViewModel.SelectedNote;
+        if (note is null || !ViewModel.HasPendingSaveConflict)
+        {
+            return;
+        }
+
+        var dialog = new ConfirmDialog(
+            "Overwrite external revision",
+            $"Replace the current disk revision of “{note.FileName}” with your draft?\n\n"
+            + "The disk revision will be replaced only if it has not changed again.");
+        if (await dialog.ShowDialog<bool>(this))
+        {
+            // Confirmation makes recreation after deletion and replacement after modification intentional.
+            ViewModel.TryOverwriteSelectedNoteAfterSaveConflict();
+        }
+    }
+
     private async void Share_OnClick(object? sender, RoutedEventArgs e)
     {
         await ShowShareDialogAsync();

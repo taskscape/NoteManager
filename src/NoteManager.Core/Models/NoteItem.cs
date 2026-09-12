@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using NoteManager.App.Infrastructure;
 
 namespace NoteManager.App.Models;
@@ -29,6 +31,7 @@ public sealed class NoteItem : ObservableObject
     private DateTime _updatedAt;
     private long _sizeBytes;
     private bool _isDirty;
+    private FileRevision? _fileRevisionBaseline;
 
     public required string Title
     {
@@ -101,7 +104,11 @@ public sealed class NoteItem : ObservableObject
         private set => SetProperty(ref _isDirty, value);
     }
 
-    public void LoadPlainTextContent(string content)
+    /// <summary>
+    /// Loads disk content without treating it as a user edit and records the
+    /// exact revision that a later save is allowed to replace.
+    /// </summary>
+    public void LoadPlainTextContent(string content, bool captureFileRevision = true)
     {
         if (!_plainTextContent.Equals(content, StringComparison.Ordinal))
         {
@@ -111,7 +118,29 @@ public sealed class NoteItem : ObservableObject
 
         IsContentLoaded = true;
         IsDirty = false;
+        if (captureFileRevision)
+        {
+            CaptureFileRevisionBaseline(content);
+        }
     }
+
+    /// <summary>
+    /// Stores a content hash and the original text so save conflict checks do
+    /// not rely on timestamps or file sizes that can legitimately collide.
+    /// </summary>
+    public void CaptureFileRevisionBaseline(string content)
+        => _fileRevisionBaseline = FileRevision.Create(content);
+
+    public bool HasFileRevisionBaseline => _fileRevisionBaseline is not null;
+
+    public string? FileRevisionBaselineContent => _fileRevisionBaseline?.Content;
+
+    /// <summary>
+    /// Confirms that a disk read still represents the revision loaded or last
+    /// saved by this editor instance before it is eligible for replacement.
+    /// </summary>
+    public bool MatchesFileRevisionBaseline(string content)
+        => _fileRevisionBaseline?.Matches(content) == true;
 
     public void MarkSaved() => IsDirty = false;
 
@@ -234,4 +263,17 @@ public sealed class NoteItem : ObservableObject
         : AttachmentDescription == "1 attachment"
         ? FileName
         : AttachmentDescription;
+
+    private sealed record FileRevision(string Content, byte[] ContentHash)
+    {
+        public static FileRevision Create(string content)
+            => new(
+                content,
+                SHA256.HashData(Encoding.UTF8.GetBytes(content)));
+
+        public bool Matches(string content)
+            => ContentHash.AsSpan().SequenceEqual(
+                   SHA256.HashData(Encoding.UTF8.GetBytes(content)))
+               && Content.Equals(content, StringComparison.Ordinal);
+    }
 }

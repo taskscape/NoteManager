@@ -396,6 +396,43 @@
               </ItemsControl>
 
               <StackPanel IsVisible="{Binding SelectedNote.IsMarkdownFile}">
+                <!-- The conflict panel keeps both revisions visible until the user chooses reload, merge, or overwrite. -->
+                <Border Margin="0,0,0,10"
+                        Padding="12"
+                        Background="{DynamicResource SelectionSurfaceBrush}"
+                        BorderBrush="{DynamicResource StrongBorderBrush}"
+                        BorderThickness="1"
+                        CornerRadius="6"
+                        IsVisible="{Binding HasPendingSaveConflict}">
+                  <StackPanel Spacing="7">
+                    <TextBlock FontWeight="SemiBold"
+                               Text="This note changed outside NoteManager" />
+                    <TextBlock Classes="secondary"
+                               Text="Your draft remains in the editor. Copy or merge the disk text below, reload it, or explicitly overwrite it." />
+                    <TextBox MaxHeight="120"
+                             AcceptsReturn="True"
+                             IsReadOnly="True"
+                             Text="{Binding PendingSaveConflict.ExternalContent}"
+                             TextWrapping="Wrap"
+                             Watermark="The file was deleted outside NoteManager." />
+                    <StackPanel HorizontalAlignment="Right"
+                                Orientation="Horizontal"
+                                Spacing="7">
+                      <Button Classes="editorAction"
+                              Click="ReloadConflictNote_OnClick">
+                        <TextBlock Text="Reload disk" />
+                      </Button>
+                      <Button Classes="editorAction"
+                              Click="SaveMergedConflictDraft_OnClick">
+                        <TextBlock Text="Save merged draft" />
+                      </Button>
+                      <Button Classes="editorAction"
+                              Click="OverwriteConflictNote_OnClick">
+                        <TextBlock Text="Overwrite disk" />
+                      </Button>
+                    </StackPanel>
+                  </StackPanel>
+                </Border>
                 <Border Classes="surface"
                         Padding="8,6">
                   <StackPanel>

@@ -34,6 +34,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private bool _isSearchIndexAvailable;
     private bool _isSearching;
     private string _statusText = string.Empty;
+    private NoteSaveConflict? _pendingSaveConflict;
     private string _centerHeading = "All notes";
     private string _currentFolderPath = string.Empty;
     private string _gitStatusText = "GIT synced";
@@ -211,7 +212,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
                 {
                     value.LoadPlainTextContent(
-                        $"The Markdown file could not be read.{Environment.NewLine}{exception.Message}");
+                        $"The Markdown file could not be read.{Environment.NewLine}{exception.Message}",
+                        captureFileRevision: false);
                 }
             }
 
@@ -389,6 +391,24 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         get => _statusText;
         set => SetProperty(ref _statusText, value);
     }
+
+    /// <summary>
+    /// Holds the disk revision that blocked a save so the user can resolve it
+    /// without losing the draft currently shown in the editor.
+    /// </summary>
+    public NoteSaveConflict? PendingSaveConflict
+    {
+        get => _pendingSaveConflict;
+        private set
+        {
+            if (SetProperty(ref _pendingSaveConflict, value))
+            {
+                OnPropertyChanged(nameof(HasPendingSaveConflict));
+            }
+        }
+    }
+
+    public bool HasPendingSaveConflict => PendingSaveConflict is not null;
 
     public bool CanCreateNote
         => IsFolderMode
@@ -1140,6 +1160,67 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     }
 
     public bool TrySaveSelectedNote(bool updateSearchIndex = true)
+        => TrySaveSelectedNote(updateSearchIndex, allowConflictOverwrite: false);
+
+    /// <summary>
+    /// Reloads the externally changed file only after the user chooses this
+    /// resolution; normal refreshes must continue preserving the draft.
+    /// </summary>
+    public bool TryReloadSelectedNoteAfterSaveConflict()
+    {
+        var note = SelectedNote;
+        var conflict = PendingSaveConflict;
+        if (note is null
+            || conflict is null
+            || !conflict.SourceFilePath.Equals(note.SourceFilePath, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (conflict.Kind == NoteSaveConflictKind.ExternalDeletion)
+        {
+            SetStatus($"{note.FileName} was deleted externally; reload is unavailable until the file is restored.");
+            return false;
+        }
+
+        try
+        {
+            var content = File.ReadAllText(note.SourceFilePath);
+            note.LoadPlainTextContent(content);
+            UpdateNoteMetadataFromDisk(note);
+            PendingSaveConflict = null;
+            RefreshEmbeddedMediaReferences(note);
+            RefreshNoteFilter();
+            SetStatus($"Reloaded the external revision of {note.FileName}");
+            return true;
+        }
+        catch (Exception exception) when (
+            exception is IOException
+            or UnauthorizedAccessException
+            or NotSupportedException)
+        {
+            SetStatus($"Could not reload {note.FileName}; the local draft is still preserved: {exception.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Saves the draft after the user has merged the external text into it;
+    /// the external revision is checked again before it can be replaced.
+    /// </summary>
+    public bool TrySaveMergedConflictDraft(bool updateSearchIndex = true)
+        => TrySaveSelectedNote(updateSearchIndex, allowConflictOverwrite: true);
+
+    /// <summary>
+    /// Performs the deliberate overwrite choice after revalidating the exact
+    /// revision that originally caused the conflict.
+    /// </summary>
+    public bool TryOverwriteSelectedNoteAfterSaveConflict(bool updateSearchIndex = true)
+        => TrySaveSelectedNote(updateSearchIndex, allowConflictOverwrite: true);
+
+    private bool TrySaveSelectedNote(
+        bool updateSearchIndex,
+        bool allowConflictOverwrite)
     {
         var note = SelectedNote;
         if (note is not { IsMarkdownFile: true, IsDirty: true })
@@ -1153,18 +1234,52 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             return false;
         }
 
+        var conflict = PendingSaveConflict;
+        var hasMatchingConflict = conflict is not null
+            && conflict.SourceFilePath.Equals(note.SourceFilePath, StringComparison.OrdinalIgnoreCase);
+        if (hasMatchingConflict && !allowConflictOverwrite)
+        {
+            SetStatus($"Save conflict for {note.FileName} is unresolved; your draft is preserved.");
+            return false;
+        }
+
+        if (allowConflictOverwrite && !hasMatchingConflict)
+        {
+            SetStatus($"No save conflict is available to resolve for {note.FileName}.");
+            return false;
+        }
+
         try
         {
-            WriteTextAtomically(
-                note.SourceFilePath,
-                note.PlainTextContent);
+            if (hasMatchingConflict && conflict!.Kind == NoteSaveConflictKind.ExternalDeletion)
+            {
+                // A deleted file is recreated only after an explicit choice and only if it remains absent.
+                CreateTextAtomicallyIfStillMissing(note.SourceFilePath, note.PlainTextContent);
+            }
+            else
+            {
+                var expectedContent = hasMatchingConflict
+                    ? conflict!.ExternalContent
+                    : note.FileRevisionBaselineContent;
+                if (expectedContent is null)
+                {
+                    SetSaveConflict(note, NoteSaveConflictKind.BaselineUnavailable, externalContent: null);
+                    return false;
+                }
+
+                WriteTextAtomically(
+                    note,
+                    note.SourceFilePath,
+                    note.PlainTextContent,
+                    expectedContent,
+                    useNoteBaseline: !hasMatchingConflict);
+            }
+
             note.MarkSaved();
-            var savedFile = new FileInfo(note.SourceFilePath);
-            note.UpdateFileMetadata(
-                MarkdownFolderService.FormatFileSize(savedFile.Length),
-                savedFile.Length,
-                savedFile.LastWriteTime.ToString("dd.MM.yyyy HH:mm"),
-                savedFile.LastWriteTimeUtc);
+            // A successful replacement becomes the new authoritative save baseline.
+            note.CaptureFileRevisionBaseline(note.PlainTextContent);
+            UpdateNoteMetadataFromDisk(note);
+            PendingSaveConflict = null;
             RefreshEmbeddedMediaReferences(note);
             RefreshNoteFilter();
             SetStatus($"Saved {note.FileName}");
@@ -1174,6 +1289,23 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             }
 
             return true;
+        }
+        catch (NoteSaveConflictException exception)
+        {
+            SetSaveConflict(note, exception.Kind, exception.ExternalContent);
+            return false;
+        }
+        catch (FileNotFoundException)
+        {
+            // A file disappearing between selection and save is a conflict, never an implicit recreate.
+            SetSaveConflict(note, NoteSaveConflictKind.ExternalDeletion, externalContent: null);
+            return false;
+        }
+        catch (IOException) when (!File.Exists(note.SourceFilePath))
+        {
+            // File.Replace can report a deletion as a generic I/O failure on some file systems.
+            SetSaveConflict(note, NoteSaveConflictKind.ExternalDeletion, externalContent: null);
+            return false;
         }
         catch (Exception exception) when (
             exception is IOException
@@ -1186,58 +1318,159 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
     }
 
+    /// <summary>
+    /// Captures the competing revision for an explicit user decision instead
+    /// of changing the editor text or marking its unsaved draft as saved.
+    /// </summary>
+    private void SetSaveConflict(
+        NoteItem note,
+        NoteSaveConflictKind kind,
+        string? externalContent)
+    {
+        PendingSaveConflict = new NoteSaveConflict(
+            kind,
+            note.SourceFilePath,
+            note.FileName,
+            note.PlainTextContent,
+            note.FileRevisionBaselineContent,
+            externalContent);
+        var resolution = kind == NoteSaveConflictKind.ExternalDeletion
+            ? "The file was deleted outside NoteManager. Restore it, merge elsewhere, or explicitly recreate it with your draft."
+            : "Reload the disk revision, merge it into the draft, or explicitly overwrite it.";
+        SetStatus($"Save conflict for {note.FileName}; your draft and the external revision are preserved. {resolution}");
+    }
+
+    private static void UpdateNoteMetadataFromDisk(NoteItem note)
+    {
+        var savedFile = new FileInfo(note.SourceFilePath);
+        note.UpdateFileMetadata(
+            MarkdownFolderService.FormatFileSize(savedFile.Length),
+            savedFile.Length,
+            savedFile.LastWriteTime.ToString("dd.MM.yyyy HH:mm"),
+            savedFile.LastWriteTimeUtc);
+    }
+
     private static void WriteTextAtomically(
+        NoteItem note,
         string filePath,
-        string content)
+        string content,
+        string expectedContent,
+        bool useNoteBaseline)
     {
         var fullPath = Path.GetFullPath(filePath);
+        // Holding this handle blocks cooperating writers while the exact-content check and replacement run.
+        using var sourceStream = new FileStream(
+            fullPath,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read | FileShare.Delete,
+            bufferSize: 4096,
+            FileOptions.SequentialScan);
+        using var reader = new StreamReader(
+            sourceStream,
+            detectEncodingFromByteOrderMarks: true,
+            bufferSize: 4096,
+            leaveOpen: true);
+        var currentContent = reader.ReadToEnd();
+        // Baseline hashing plus exact text comparison catches equal-size, equal-time edits.
+        var matchesExpectedRevision = useNoteBaseline
+            ? note.MatchesFileRevisionBaseline(currentContent)
+            : currentContent.Equals(expectedContent, StringComparison.Ordinal);
+        if (!matchesExpectedRevision)
+        {
+            throw new NoteSaveConflictException(
+                NoteSaveConflictKind.ExternalModification,
+                currentContent);
+        }
+
+        ReplaceWithTemporaryFile(fullPath, content);
+    }
+
+    private static void CreateTextAtomicallyIfStillMissing(string filePath, string content)
+    {
+        var fullPath = Path.GetFullPath(filePath);
+        if (File.Exists(fullPath))
+        {
+            throw new NoteSaveConflictException(
+                NoteSaveConflictKind.ExternalModification,
+                File.ReadAllText(fullPath));
+        }
+
+        var temporaryPath = WriteTemporaryFile(fullPath, content);
+        try
+        {
+            // CreateNew semantics ensure an external restore cannot be silently replaced.
+            File.Move(temporaryPath, fullPath, overwrite: false);
+        }
+        finally
+        {
+            TryDeleteTemporaryFile(temporaryPath);
+        }
+    }
+
+    private static void ReplaceWithTemporaryFile(string fullPath, string content)
+    {
+        var temporaryPath = WriteTemporaryFile(fullPath, content);
+        try
+        {
+            // Replace requires the original path to exist, so a concurrent deletion cannot be recreated by autosave.
+            File.Replace(temporaryPath, fullPath, destinationBackupFileName: null);
+        }
+        finally
+        {
+            TryDeleteTemporaryFile(temporaryPath);
+        }
+    }
+
+    private static string WriteTemporaryFile(string fullPath, string content)
+    {
         var folderPath = Path.GetDirectoryName(fullPath)
                          ?? throw new IOException(
                              "The note folder could not be resolved.");
         var temporaryPath = Path.Combine(
             folderPath,
             $".{Path.GetFileName(fullPath)}.{Guid.NewGuid():N}.tmp");
+        using var stream = new FileStream(
+            temporaryPath,
+            FileMode.CreateNew,
+            FileAccess.Write,
+            FileShare.None,
+            bufferSize: 4096,
+            FileOptions.WriteThrough);
+        using var writer = new StreamWriter(
+            stream,
+            new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
+            bufferSize: 4096,
+            leaveOpen: true);
+        writer.Write(content);
+        writer.Flush();
+        stream.Flush(flushToDisk: true);
+        return temporaryPath;
+    }
 
+    private static void TryDeleteTemporaryFile(string temporaryPath)
+    {
         try
         {
-            using (var stream = new FileStream(
-                       temporaryPath,
-                       FileMode.CreateNew,
-                       FileAccess.Write,
-                       FileShare.None,
-                       bufferSize: 4096,
-                       FileOptions.WriteThrough))
+            if (File.Exists(temporaryPath))
             {
-                using var writer = new StreamWriter(
-                    stream,
-                    new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
-                    bufferSize: 4096,
-                    leaveOpen: true);
-                writer.Write(content);
-                writer.Flush();
-                stream.Flush(flushToDisk: true);
+                File.Delete(temporaryPath);
             }
-
-            File.Move(
-                temporaryPath,
-                fullPath,
-                overwrite: true);
         }
-        finally
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException)
         {
-            try
-            {
-                if (File.Exists(temporaryPath))
-                {
-                    File.Delete(temporaryPath);
-                }
-            }
-            catch (Exception exception) when (
-                exception is IOException or UnauthorizedAccessException)
-            {
-                // A failed cleanup must not hide the original save outcome.
-            }
+            // A failed cleanup must not hide the original save outcome.
         }
+    }
+
+    private sealed class NoteSaveConflictException(
+        NoteSaveConflictKind kind,
+        string? externalContent)
+        : IOException("The note changed outside NoteManager.")
+    {
+        public NoteSaveConflictKind Kind { get; } = kind;
+        public string? ExternalContent { get; } = externalContent;
     }
 
     private bool IsMarkdownPathInCurrentFolder(string filePath)
