@@ -17,6 +17,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private readonly ApplicationActivityLog _activityLog;
     // Injectable reader makes transient file-access recovery deterministic in regression tests.
     private readonly Func<string, string> _readMarkdownContent;
+    // Injectable folder loader lets regression tests hold an open request at its await boundary.
+    private readonly Func<string, MarkdownFolderLoadResult> _loadMarkdownFolder;
     private CancellationTokenSource? _indexCancellation;
     private CancellationTokenSource? _mediaRefreshCancellation;
     private CancellationTokenSource? _publishCancellation;
@@ -45,6 +47,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private NoteSortType _selectedSortType = NoteSortType.Updated;
     private EmbeddedMediaVaultIndex? _mediaIndex;
     private long _folderGeneration;
+    // This generation belongs to open-folder requests, which can overlap before either request applies.
+    private long _folderLoadGeneration;
     private long _searchGeneration;
 
     private const string AllNotesFilterKey = "*";
@@ -57,7 +61,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             infostackerPublishingService,
             activityLog,
             useSampleDataForTesting: false,
-            readMarkdownContent: File.ReadAllText)
+            readMarkdownContent: File.ReadAllText,
+            loadMarkdownFolder: MarkdownFolderService.LoadFolder)
     {
     }
 
@@ -70,7 +75,22 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             infostackerPublishingService: null,
             activityLog: null,
             useSampleDataForTesting: false,
-            readMarkdownContent: readMarkdownContent)
+            readMarkdownContent: readMarkdownContent,
+            loadMarkdownFolder: MarkdownFolderService.LoadFolder)
+    {
+    }
+
+    /// <summary>
+    /// Provides tests with a controllable folder-load boundary so a late draft
+    /// edit and reverse-order folder completion remain deterministic.
+    /// </summary>
+    internal MainViewModel(Func<string, MarkdownFolderLoadResult> loadMarkdownFolder)
+        : this(
+            infostackerPublishingService: null,
+            activityLog: null,
+            useSampleDataForTesting: false,
+            readMarkdownContent: File.ReadAllText,
+            loadMarkdownFolder: loadMarkdownFolder)
     {
     }
 
@@ -78,7 +98,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         InfostackerPublishingService? infostackerPublishingService,
         ApplicationActivityLog? activityLog,
         bool useSampleDataForTesting,
-        Func<string, string> readMarkdownContent)
+        Func<string, string> readMarkdownContent,
+        Func<string, MarkdownFolderLoadResult> loadMarkdownFolder)
     {
         _infostackerPublishingService =
             infostackerPublishingService ?? new InfostackerPublishingService();
@@ -86,6 +107,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         _activityLog = activityLog ?? new ApplicationActivityLog();
         _readMarkdownContent = readMarkdownContent
             ?? throw new ArgumentNullException(nameof(readMarkdownContent));
+        _loadMarkdownFolder = loadMarkdownFolder
+            ?? throw new ArgumentNullException(nameof(loadMarkdownFolder));
         _allNotes = new RangeObservableCollection<NoteItem>();
         _visibleNotes = new RangeObservableCollection<NoteItem>();
         PublishAttachments = new ReadOnlyObservableCollection<PublicationAttachment>(
@@ -137,7 +160,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             infostackerPublishingService,
             activityLog,
             useSampleDataForTesting: true,
-            readMarkdownContent: File.ReadAllText);
+            readMarkdownContent: File.ReadAllText,
+            // Sample data uses the production loader if a test later opens a real folder.
+            loadMarkdownFolder: MarkdownFolderService.LoadFolder);
 
     public ObservableCollection<NavigationItem> NavigationItems { get; }
     public ObservableCollection<NoteItem> NotesView => _visibleNotes;
@@ -442,7 +467,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     // Content writes require a verified disk revision; metadata selection alone is insufficient.
     public bool CanEditSelectedNote
-        => CanDeleteSelectedNote && SelectedNote is { IsContentLoaded: true };
+        // Keep the editor binding locked for the entire folder transition, including its final save check.
+        => !IsLoadingFolder
+           && CanDeleteSelectedNote
+           && SelectedNote is { IsContentLoaded: true };
 
     public bool CanPublishSelectedNote
         => CanEditSelectedNote && !IsPublishing;
@@ -1627,8 +1655,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         string folderPath,
         string? selectedFilePath = null)
     {
+        // A later open supersedes every earlier request, even when the later request cannot begin.
+        var loadGeneration = ++_folderLoadGeneration;
         if (!TrySaveSelectedNote(updateSearchIndex: false))
         {
+            // Stop exposing the old request as an active transition after its successor was rejected.
+            IsLoadingFolder = false;
             return;
         }
 
@@ -1639,7 +1671,19 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
         try
         {
-            var result = await Task.Run(() => MarkdownFolderService.LoadFolder(folderPath));
+            var result = await Task.Run(() => _loadMarkdownFolder(folderPath));
+
+            // Obsolete requests must not overwrite the folder selected by a later completion.
+            if (loadGeneration != _folderLoadGeneration)
+            {
+                return;
+            }
+
+            // Revalidate immediately before replacement because an already-queued edit can arrive during the read.
+            if (!TrySaveSelectedNote(updateSearchIndex: false))
+            {
+                return;
+            }
 
             SearchText = string.Empty;
             SelectedNavigationItem = null;
@@ -1685,11 +1729,19 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
         catch (Exception exception)
         {
-            SetStatus($"Could not open folder: {exception.Message}");
+            // An obsolete request must not replace the current folder's status with its own error.
+            if (loadGeneration == _folderLoadGeneration)
+            {
+                SetStatus($"Could not open folder: {exception.Message}");
+            }
         }
         finally
         {
-            IsLoadingFolder = false;
+            // Only the active request may re-enable the editor after all older requests have settled.
+            if (loadGeneration == _folderLoadGeneration)
+            {
+                IsLoadingFolder = false;
+            }
         }
     }
 
@@ -2057,6 +2109,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public void Dispose()
     {
         TrySaveSelectedNote(updateSearchIndex: false);
+        // Prevent an already-running folder read from applying after this view model has been torn down.
+        _folderLoadGeneration++;
         _folderGeneration++;
         _indexCancellation?.Cancel();
         _indexCancellation?.Dispose();
