@@ -2005,16 +2005,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
         var folderPath = CurrentFolderPath;
         var folderGeneration = _folderGeneration;
-        var selectedPath = SelectedNote?.SourceFilePath;
-        var selectedFilterKey = SelectedNavigationItem?.FilterKey ?? AllNotesFilterKey;
-        var dirtyNotes = _allNotes
-            .Where(note => note.IsDirty)
-            .ToDictionary(note => note.SourceFilePath, StringComparer.OrdinalIgnoreCase);
 
         try
         {
+            // Use the injected loader so refreshes share the deterministic test boundary used by folder loads.
             var result = await Task.Run(
-                () => MarkdownFolderService.LoadFolder(folderPath),
+                () => _loadMarkdownFolder(folderPath),
                 cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
             if (!IsFolderMode
@@ -2023,6 +2019,13 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             {
                 return;
             }
+
+            // Capture live state only after the worker completes so navigation and typing during the await win.
+            var selectedPath = SelectedNote?.SourceFilePath;
+            var selectedFilterKey = SelectedNavigationItem?.FilterKey ?? AllNotesFilterKey;
+            var dirtyNotes = _allNotes
+                .Where(note => note.IsDirty)
+                .ToDictionary(note => note.SourceFilePath, StringComparer.OrdinalIgnoreCase);
 
             // Keep unsaved editor instances instead of replacing their in-memory drafts with disk content.
             var refreshedNotes = result.Notes

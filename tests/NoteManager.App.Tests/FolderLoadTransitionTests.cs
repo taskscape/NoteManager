@@ -114,6 +114,49 @@ public sealed class FolderLoadTransitionTests
         await WaitForIndexAsync(viewModel);
     }
 
+    [Fact]
+    public async Task RefreshMarkdownFolderAsync_WhenUserChangesNoteFilterAndDraftDuringRead_KeepsTheLiveState()
+    {
+        using var folder = new TemporaryNoteFolder();
+        var aPath = folder.WriteNote("a.md", "tags:\n  - alpha\n\nA saved content");
+        var bPath = folder.WriteNote("b.md", "tags:\n  - beta\n\nB saved content");
+        using var refreshStarted = new ManualResetEventSlim();
+        using var allowRefreshToFinish = new ManualResetEventSlim();
+        var pauseRefresh = 0;
+        using var viewModel = new MainViewModel(path =>
+        {
+            // Pause only the refresh read so the initial folder load establishes the starting selection.
+            if (Volatile.Read(ref pauseRefresh) != 0)
+            {
+                refreshStarted.Set();
+                allowRefreshToFinish.Wait(TimeSpan.FromSeconds(10));
+            }
+
+            return MarkdownFolderService.LoadFolder(path);
+        });
+        await viewModel.LoadMarkdownFolderAsync(folder.Path, bPath);
+
+        // Start from B, then make the user changes while the refresh worker is paused.
+        // Publish the pause request to the Task.Run loader thread before starting the refresh.
+        Volatile.Write(ref pauseRefresh, 1);
+        var refreshTask = viewModel.RefreshMarkdownFolderAsync();
+        await WaitForSetAsync(refreshStarted);
+        var userSelectedNote = viewModel.NotesView.Single(note => note.SourceFilePath == aPath);
+        viewModel.SelectedNote = userSelectedNote;
+        viewModel.SelectedNavigationItem = viewModel.NavigationItems.Single(item => item.FilterKey == "alpha");
+        userSelectedNote.PlainTextContent = "A draft typed during refresh";
+
+        allowRefreshToFinish.Set();
+        await refreshTask;
+        await WaitForIndexAsync(viewModel);
+
+        Assert.Same(userSelectedNote, viewModel.SelectedNote);
+        Assert.Equal("a.md", viewModel.SelectedNote.FileName);
+        Assert.Equal("alpha", viewModel.SelectedNavigationItem?.FilterKey);
+        Assert.Equal("A draft typed during refresh", viewModel.SelectedNote.PlainTextContent);
+        Assert.True(viewModel.SelectedNote.IsDirty);
+    }
+
     private static async Task WaitForSetAsync(ManualResetEventSlim gate)
     {
         var deadline = DateTime.UtcNow.AddSeconds(10);
