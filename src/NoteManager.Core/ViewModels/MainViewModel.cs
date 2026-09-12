@@ -591,24 +591,14 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         var updatedMarkdown = MarkdownTagEditorService.RewriteTagBlocks(
             note.PlainTextContent,
             normalizedTags);
-        var selectedFilterKey = SelectedNavigationItem?.FilterKey;
 
         note.PlainTextContent = updatedMarkdown;
-        note.ReplaceTags(normalizedTags);
+        // The common save pipeline parses persisted Markdown so a failed dialog write cannot alter model tags or navigation.
         if (!TrySaveNote(note, updateSearchIndex: true, allowConflictOverwrite: false))
         {
             return false;
         }
 
-        RebuildTagNavigation();
-        var restoredNavigation = NavigationItems.FirstOrDefault(item =>
-            item.FilterKey.Equals(
-                selectedFilterKey ?? AllNotesFilterKey,
-                StringComparison.OrdinalIgnoreCase))
-            ?? NavigationItems.FirstOrDefault(item =>
-                item.FilterKey == AllNotesFilterKey);
-        SelectedNavigationItem = restoredNavigation;
-        RefreshNoteFilter();
         SetStatus(
             normalizedTags.Length == 1
                 ? $"Assigned 1 tag to {note.FileName}"
@@ -1590,10 +1580,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             note.MarkSaved();
             // A successful replacement becomes the new authoritative save baseline.
             note.CaptureFileRevisionBaseline(note.PlainTextContent);
-            UpdateNoteMetadataFromDisk(note);
             PendingSaveConflict = null;
-            RefreshEmbeddedMediaReferences(note);
-            RefreshNoteFilter();
+            RefreshSavedNoteMetadata(note);
             SetStatus($"Saved {note.FileName}");
             if (updateSearchIndex)
             {
@@ -1660,6 +1648,28 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             savedFile.Length,
             savedFile.LastWriteTime.ToString("dd.MM.yyyy HH:mm"),
             savedFile.LastWriteTimeUtc);
+    }
+
+    /// <summary>
+    /// Synchronizes the in-memory note and tag navigation with content that
+    /// has already been persisted, so editor, dialog, and conflict-resolution
+    /// saves expose identical tag state without a folder reload.
+    /// </summary>
+    private void RefreshSavedNoteMetadata(NoteItem note)
+    {
+        var selectedFilterKey = SelectedNavigationItem?.FilterKey ?? AllNotesFilterKey;
+        UpdateNoteMetadataFromDisk(note);
+        // Parse the persisted editor text only after the write succeeds so failed saves retain their prior navigation state.
+        note.ReplaceTags(MarkdownMetadataParser.ParseTags(note.PlainTextContent));
+        RebuildTagNavigation();
+
+        var restoredNavigation = NavigationItems.FirstOrDefault(item =>
+            item.FilterKey.Equals(selectedFilterKey, StringComparison.OrdinalIgnoreCase))
+            ?? NavigationItems.FirstOrDefault(item => item.FilterKey == AllNotesFilterKey);
+        // Bypass the navigation setter because the note is already saved and this is a collection replacement, not user navigation.
+        SetSelectedNavigationItemAfterRefresh(restoredNavigation);
+        RefreshEmbeddedMediaReferences(note);
+        RefreshNoteFilter();
     }
 
     private static void WriteTextAtomically(
