@@ -21,6 +21,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private readonly Func<string, MarkdownFolderLoadResult> _loadMarkdownFolder;
     // Injectable deletion lets regression tests hold the worker after the file is removed.
     private readonly Action<string> _deleteMarkdownFile;
+    // This test seam pauses after a PDF copy, letting tests exercise the UI continuation deterministically.
+    private readonly Action _afterPdfImportFiles;
     private CancellationTokenSource? _indexCancellation;
     private CancellationTokenSource? _mediaRefreshCancellation;
     private CancellationTokenSource? _publishCancellation;
@@ -50,7 +52,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private EmbeddedMediaVaultIndex? _mediaIndex;
     // Tracks drafts whose authorized deletion is in flight so navigation cannot autosave them back to disk.
     private readonly HashSet<NoteItem> _deletingNotes = [];
-    private long _folderGeneration;
+    // Changes only when the active vault changes, so same-vault work can outlive index restarts.
+    private long _vaultGeneration;
+    // Identifies individual index runs without changing the active vault's identity.
+    private long _indexGeneration;
     // This generation belongs to open-folder requests, which can overlap before either request applies.
     private long _folderLoadGeneration;
     private long _searchGeneration;
@@ -67,7 +72,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             useSampleDataForTesting: false,
             readMarkdownContent: File.ReadAllText,
             loadMarkdownFolder: MarkdownFolderService.LoadFolder,
-            deleteMarkdownFile: File.Delete)
+            deleteMarkdownFile: File.Delete,
+            afterPdfImportFiles: null)
     {
     }
 
@@ -82,7 +88,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             useSampleDataForTesting: false,
             readMarkdownContent: readMarkdownContent,
             loadMarkdownFolder: MarkdownFolderService.LoadFolder,
-            deleteMarkdownFile: File.Delete)
+            deleteMarkdownFile: File.Delete,
+            afterPdfImportFiles: null)
     {
     }
 
@@ -97,7 +104,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             useSampleDataForTesting: false,
             readMarkdownContent: File.ReadAllText,
             loadMarkdownFolder: loadMarkdownFolder,
-            deleteMarkdownFile: File.Delete)
+            deleteMarkdownFile: File.Delete,
+            afterPdfImportFiles: null)
     {
     }
 
@@ -112,7 +120,24 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             useSampleDataForTesting: false,
             readMarkdownContent: File.ReadAllText,
             loadMarkdownFolder: MarkdownFolderService.LoadFolder,
-            deleteMarkdownFile: deleteMarkdownFile)
+            deleteMarkdownFile: deleteMarkdownFile,
+            afterPdfImportFiles: null)
+    {
+    }
+
+    /// <summary>
+    /// Provides tests with a post-copy boundary so normal saves and vault
+    /// switches can be verified before the PDF-import continuation applies.
+    /// </summary>
+    internal MainViewModel(Action afterPdfImportFiles)
+        : this(
+            infostackerPublishingService: null,
+            activityLog: null,
+            useSampleDataForTesting: false,
+            readMarkdownContent: File.ReadAllText,
+            loadMarkdownFolder: MarkdownFolderService.LoadFolder,
+            deleteMarkdownFile: File.Delete,
+            afterPdfImportFiles: afterPdfImportFiles)
     {
     }
 
@@ -122,7 +147,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         bool useSampleDataForTesting,
         Func<string, string> readMarkdownContent,
         Func<string, MarkdownFolderLoadResult> loadMarkdownFolder,
-        Action<string> deleteMarkdownFile)
+        Action<string> deleteMarkdownFile,
+        Action? afterPdfImportFiles)
     {
         _infostackerPublishingService =
             infostackerPublishingService ?? new InfostackerPublishingService();
@@ -134,6 +160,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             ?? throw new ArgumentNullException(nameof(loadMarkdownFolder));
         _deleteMarkdownFile = deleteMarkdownFile
             ?? throw new ArgumentNullException(nameof(deleteMarkdownFile));
+        // Production intentionally has no pause; tests opt in to control the post-copy race.
+        _afterPdfImportFiles = afterPdfImportFiles ?? (() => { });
         _allNotes = new RangeObservableCollection<NoteItem>();
         _visibleNotes = new RangeObservableCollection<NoteItem>();
         PublishAttachments = new ReadOnlyObservableCollection<PublicationAttachment>(
@@ -188,7 +216,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             readMarkdownContent: File.ReadAllText,
             // Sample data uses the production loader if a test later opens a real folder.
             loadMarkdownFolder: MarkdownFolderService.LoadFolder,
-            deleteMarkdownFile: File.Delete);
+            deleteMarkdownFile: File.Delete,
+            // Sample data never pauses imports; only targeted race tests supply that hook.
+            afterPdfImportFiles: null);
 
     public ObservableCollection<NavigationItem> NavigationItems { get; }
     public ObservableCollection<NoteItem> NotesView => _visibleNotes;
@@ -962,7 +992,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
 
         var folderPath = CurrentFolderPath;
-        var folderGeneration = _folderGeneration;
+        // Index updates do not change this value, so a normal save cannot cancel a document import.
+        var vaultGeneration = _vaultGeneration;
         SetStatus(
             pdfPaths.Length == 1
                 ? $"Importing {Path.GetFileName(pdfPaths[0])} for conversion…"
@@ -971,11 +1002,17 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         try
         {
             // Do not create a Markdown embed here: the converter owns the new document's Markdown counterpart.
-            var importedPdfs = await Task.Run(
-                () => ImportPdfFiles(pdfPaths, folderPath, markdownFilePath: null));
-            if (folderGeneration != _folderGeneration)
+            var importedPdfs = await Task.Run(() =>
+            {
+                var imported = ImportPdfFiles(pdfPaths, folderPath, markdownFilePath: null);
+                _afterPdfImportFiles();
+                return imported;
+            });
+            if (!IsCurrentVault(folderPath, vaultGeneration))
             {
                 DeleteCopiedImports(importedPdfs);
+                // A user-requested import must explain why its owned copy was rolled back.
+                SetStatus("PDF import cancelled because the notes folder changed while the PDF was being copied.");
                 return [];
             }
 
@@ -1034,7 +1071,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
 
         var folderPath = CurrentFolderPath;
-        var folderGeneration = _folderGeneration;
+        // Keep the vault identity separate from index runs started by saves or renames.
+        var vaultGeneration = _vaultGeneration;
         SetStatus(
             pdfPaths.Length == 1
                 ? $"Importing {Path.GetFileName(pdfPaths[0])}…"
@@ -1042,15 +1080,20 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
         try
         {
-            var importedPdfs = await Task.Run(
-                () => ImportPdfFiles(
+            var importedPdfs = await Task.Run(() =>
+            {
+                var imported = ImportPdfFiles(
                     pdfPaths,
                     folderPath,
-                    targetNote.SourceFilePath));
-            if (folderGeneration != _folderGeneration
-                || !ReferenceEquals(SelectedNote, targetNote))
+                    targetNote.SourceFilePath);
+                _afterPdfImportFiles();
+                return imported;
+            });
+            if (!CanApplyPdfImportToTarget(folderPath, vaultGeneration, targetNote))
             {
                 DeleteCopiedImports(importedPdfs);
+                // Report cancellation instead of silently discarding a copied file and requested embed.
+                SetStatus("PDF import cancelled because the notes folder or target note changed while the PDF was being copied.");
                 return;
             }
 
@@ -1085,6 +1128,26 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             SetStatus($"Could not embed the dropped PDF: {exception.Message}");
         }
     }
+
+    /// <summary>
+    /// Confirms that an asynchronous document import still belongs to the
+    /// vault in which it started, independently of any index restart.
+    /// </summary>
+    private bool IsCurrentVault(string folderPath, long vaultGeneration)
+        => IsFolderMode
+           && vaultGeneration == _vaultGeneration
+           && CurrentFolderPath.Equals(folderPath, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Keeps an embed import attached to its original note while allowing
+    /// ordinary saves and same-note renames to restart indexing safely.
+    /// </summary>
+    private bool CanApplyPdfImportToTarget(
+        string folderPath,
+        long vaultGeneration,
+        NoteItem targetNote)
+        => IsCurrentVault(folderPath, vaultGeneration)
+           && ReferenceEquals(SelectedNote, targetNote);
 
     private static ImportedPdf[] ImportPdfFiles(
         IEnumerable<string> sourcePaths,
@@ -1938,8 +2001,16 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             _mediaIndex = result.MediaIndex;
             _allNotes.ReplaceRange(result.Notes);
 
-            CurrentFolderPath = Path.GetFullPath(folderPath);
+            var nextFolderPath = Path.GetFullPath(folderPath);
+            var vaultChanged = !IsFolderMode
+                || !CurrentFolderPath.Equals(nextFolderPath, StringComparison.OrdinalIgnoreCase);
+            CurrentFolderPath = nextFolderPath;
             IsFolderMode = true;
+            if (vaultChanged)
+            {
+                // Only a completed transition to another vault invalidates its asynchronous work.
+                _vaultGeneration++;
+            }
             ApplySortType(NoteSortPreferenceService.Load(CurrentFolderPath));
             try
             {
@@ -2004,7 +2075,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
 
         var folderPath = CurrentFolderPath;
-        var folderGeneration = _folderGeneration;
+        // A refresh belongs to the vault, not to whichever index run happens to be latest.
+        var vaultGeneration = _vaultGeneration;
 
         try
         {
@@ -2014,7 +2086,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
             if (!IsFolderMode
-                || folderGeneration != _folderGeneration
+                || vaultGeneration != _vaultGeneration
                 || !CurrentFolderPath.Equals(folderPath, StringComparison.OrdinalIgnoreCase))
             {
                 return;
@@ -2097,7 +2169,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         _indexCancellation = new CancellationTokenSource();
         _searchCancellation = null;
         _searchGeneration++;
-        var generation = ++_folderGeneration;
+        // Index work is independently versioned so save and rename restarts cannot invalidate vault work.
+        var generation = ++_indexGeneration;
         var cancellationToken = _indexCancellation.Token;
 
         SetSearchIndexAvailable(false);
@@ -2105,7 +2178,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         SearchIndexStatus = "Indexing 0%";
         var progress = new Progress<NoteSearchIndexProgress>(update =>
         {
-            if (generation != _folderGeneration || cancellationToken.IsCancellationRequested)
+            if (generation != _indexGeneration || cancellationToken.IsCancellationRequested)
             {
                 return;
             }
@@ -2131,7 +2204,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         {
             var result = await Task.Run(
                 () => NoteSearchIndexService.UpdateIndex(folderPath, progress, cancellationToken));
-            if (generation != _folderGeneration || cancellationToken.IsCancellationRequested)
+            if (generation != _indexGeneration || cancellationToken.IsCancellationRequested)
             {
                 return;
             }
@@ -2155,7 +2228,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
         catch (Exception exception)
         {
-            if (generation != _folderGeneration)
+            if (generation != _indexGeneration)
             {
                 return;
             }
@@ -2212,13 +2285,14 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         _searchCancellation = new CancellationTokenSource();
         var cancellationToken = _searchCancellation.Token;
         var folderPath = CurrentFolderPath;
-        var folderGeneration = _folderGeneration;
+        // Searches are tied to the index snapshot rather than the vault-lifetime counter.
+        var indexGeneration = _indexGeneration;
         var searchGeneration = ++_searchGeneration;
         _ = RunFullTextSearchAsync(
             folderPath,
             query,
             parseResult.Query,
-            folderGeneration,
+            indexGeneration,
             searchGeneration,
             useDebounce,
             cancellationToken);
@@ -2228,7 +2302,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         string folderPath,
         string queryText,
         ParsedNoteSearchQuery query,
-        long folderGeneration,
+        long indexGeneration,
         long searchGeneration,
         bool useDebounce,
         CancellationToken cancellationToken)
@@ -2253,7 +2327,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                     cancellationToken));
             if (cancellationToken.IsCancellationRequested
                 || result.IsCanceled
-                || folderGeneration != _folderGeneration
+                || indexGeneration != _indexGeneration
                 || searchGeneration != _searchGeneration
                 || !SearchText.Trim().Equals(
                     queryText,
@@ -2361,7 +2435,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         TrySaveSelectedNote(updateSearchIndex: false);
         // Prevent an already-running folder read from applying after this view model has been torn down.
         _folderLoadGeneration++;
-        _folderGeneration++;
+        // Disposal ends both vault and index lifetimes so no late continuation can update this instance.
+        _vaultGeneration++;
+        _indexGeneration++;
         _indexCancellation?.Cancel();
         _indexCancellation?.Dispose();
         _indexCancellation = null;
@@ -2488,7 +2564,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
         _mediaRefreshCancellation = new CancellationTokenSource();
         var cancellationToken = _mediaRefreshCancellation.Token;
-        var generation = _folderGeneration;
+        // Media refreshes need only the vault identity; saving the note may restart indexing meanwhile.
+        var generation = _vaultGeneration;
         _ = RefreshEmbeddedMediaReferencesAsync(note, generation, cancellationToken);
     }
 
@@ -2501,7 +2578,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         {
             await Task.Delay(180, cancellationToken);
             if (cancellationToken.IsCancellationRequested
-                || generation != _folderGeneration
+                || generation != _vaultGeneration
                 || !ReferenceEquals(note, SelectedNote))
             {
                 return;
