@@ -231,6 +231,16 @@ public partial class MainWindow : Window
     {
         try
         {
+            var requestedVaultPath = Path.GetFullPath(folder);
+            if (_pluginManager.VaultPath is { } activePluginVaultPath
+                && !requestedVaultPath.Equals(
+                    activePluginVaultPath,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                // Stop old-vault schedulers before ViewModel changes host state, preventing cross-vault callbacks.
+                await _pluginManager.StopAllAsync();
+            }
+
             await ViewModel.LoadMarkdownFolderAsync(folder);
             if (ViewModel.IsFolderMode
                 && Path.GetFullPath(folder).Equals(
@@ -681,26 +691,41 @@ public partial class MainWindow : Window
     }
 
     private async Task<bool> SaveActiveNoteForPluginAsync(
+        string vaultPath,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         return await Dispatcher.UIThread.InvokeAsync(
-            () => ViewModel.TrySaveSelectedNote(updateSearchIndex: false),
+            () => IsCurrentPluginVault(vaultPath)
+                  // Plugin saves must update search immediately because Git may not alter the pulled tree.
+                  && ViewModel.TrySaveSelectedNote(updateSearchIndex: true),
             DispatcherPriority.Normal,
             cancellationToken);
     }
 
-    private Task RefreshDocumentsForPluginAsync(CancellationToken cancellationToken)
+    private Task RefreshDocumentsForPluginAsync(
+        string vaultPath,
+        CancellationToken cancellationToken)
         => RunOnUiThreadAsync(
-            () => ViewModel.RefreshMarkdownFolderAsync(cancellationToken),
+            () => IsCurrentPluginVault(vaultPath)
+                // Never allow a plugin from an old vault to reload documents into the current vault.
+                ? ViewModel.RefreshMarkdownFolderAsync(cancellationToken)
+                : Task.CompletedTask,
             cancellationToken);
 
-    private void ReportPluginStatus(string message)
+    private void ReportPluginStatus(string vaultPath, string message)
         => Dispatcher.UIThread.Post(
-            () => ViewModel.StatusText = message,
+            () =>
+            {
+                // Status updates share the same vault boundary as save and refresh callbacks.
+                if (IsCurrentPluginVault(vaultPath))
+                {
+                    ViewModel.StatusText = message;
+                }
+            },
             DispatcherPriority.Normal);
 
-    private void ReportPluginIndicatorStatus(PluginIndicatorStatus status)
+    private void ReportPluginIndicatorStatus(string vaultPath, PluginIndicatorStatus status)
     {
         if (!status.PluginId.Equals("git-integration", StringComparison.OrdinalIgnoreCase))
         {
@@ -708,11 +733,21 @@ public partial class MainWindow : Window
         }
 
         Dispatcher.UIThread.Post(
-            () => ViewModel.GitStatusText = status.Text,
+            () =>
+            {
+                // A queued indicator update must not overwrite the status of a newly opened vault.
+                if (IsCurrentPluginVault(vaultPath))
+                {
+                    ViewModel.GitStatusText = status.Text;
+                }
+            },
             DispatcherPriority.Normal);
     }
 
-    private void ReportPluginIndicatorVisibility(string pluginId, bool isVisible)
+    private void ReportPluginIndicatorVisibility(
+        string vaultPath,
+        string pluginId,
+        bool isVisible)
     {
         if (!pluginId.Equals("git-integration", StringComparison.OrdinalIgnoreCase))
         {
@@ -720,8 +755,23 @@ public partial class MainWindow : Window
         }
 
         Dispatcher.UIThread.Post(
-            () => ViewModel.IsGitStatusVisible = isVisible,
+            () =>
+            {
+                // Visibility is also scoped so an old scheduler cannot reveal Git state in a new vault.
+                if (IsCurrentPluginVault(vaultPath))
+                {
+                    ViewModel.IsGitStatusVisible = isVisible;
+                }
+            },
             DispatcherPriority.Normal);
     }
+
+    private bool IsCurrentPluginVault(string vaultPath)
+        => ViewModel.IsFolderMode
+           && !string.IsNullOrWhiteSpace(ViewModel.CurrentFolderPath)
+           // Full paths avoid treating relative spellings of different folders as the same vault.
+           && Path.GetFullPath(vaultPath).Equals(
+               Path.GetFullPath(ViewModel.CurrentFolderPath),
+               StringComparison.OrdinalIgnoreCase);
 
 }

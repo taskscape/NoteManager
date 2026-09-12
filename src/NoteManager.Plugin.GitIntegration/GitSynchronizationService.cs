@@ -93,6 +93,14 @@ public sealed class GitSynchronizationService(
             return await FailureAsync(context, "Git pull failed", pull, cancellationToken);
         }
 
+        if (context.RefreshDocumentsAsync is not null)
+        {
+            // A successful pull can replace, add, or remove Markdown files; reconcile now so this also
+            // indexes the plugin-saved note before a later stage, commit, or push operation can fail.
+            context.ReportStatus("Refreshing notes after Git pull…");
+            await context.RefreshDocumentsAsync(cancellationToken);
+        }
+
         var refreshedState = await _inspector.InspectAsync(context.VaultPath, cancellationToken);
         if (!refreshedState.CanSynchronize)
         {

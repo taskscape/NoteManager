@@ -65,21 +65,22 @@ public sealed class PluginManager
 {
     private readonly SemaphoreSlim _lifecycleLock = new(1, 1);
     private readonly PluginActivationStore _activationStore = new();
-    private readonly Func<CancellationToken, Task<bool>> _saveActiveNoteAsync;
-    private readonly Func<CancellationToken, Task>? _refreshDocumentsAsync;
-    private readonly Action<string> _reportStatus;
-    private readonly Action<PluginIndicatorStatus> _reportIndicatorStatus;
-    private readonly Action<string, bool> _reportIndicatorVisibility;
+    // Each host callback carries its originating vault so the desktop can reject stale plugin work.
+    private readonly Func<string, CancellationToken, Task<bool>> _saveActiveNoteAsync;
+    private readonly Func<string, CancellationToken, Task>? _refreshDocumentsAsync;
+    private readonly Action<string, string> _reportStatus;
+    private readonly Action<string, PluginIndicatorStatus> _reportIndicatorStatus;
+    private readonly Action<string, string, bool> _reportIndicatorVisibility;
     private HashSet<string> _enabledPluginIds = new(StringComparer.OrdinalIgnoreCase);
     private string? _vaultPath;
 
     public PluginManager(
         string applicationDirectory,
-        Func<CancellationToken, Task<bool>> saveActiveNoteAsync,
-        Action<string> reportStatus,
-        Action<PluginIndicatorStatus> reportIndicatorStatus,
-        Action<string, bool> reportIndicatorVisibility,
-        Func<CancellationToken, Task>? refreshDocumentsAsync = null)
+        Func<string, CancellationToken, Task<bool>> saveActiveNoteAsync,
+        Action<string, string> reportStatus,
+        Action<string, PluginIndicatorStatus> reportIndicatorStatus,
+        Action<string, string, bool> reportIndicatorVisibility,
+        Func<string, CancellationToken, Task>? refreshDocumentsAsync = null)
     {
         _saveActiveNoteAsync = saveActiveNoteAsync;
         _refreshDocumentsAsync = refreshDocumentsAsync;
@@ -119,13 +120,14 @@ public sealed class PluginManager
                 or System.Text.Json.JsonException)
             {
                 _enabledPluginIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                _reportStatus($"Plugin activation configuration could not be read: {exception.Message}");
+                // The activation error belongs to the vault being initialized, not a later vault.
+                _reportStatus(_vaultPath, $"Plugin activation configuration could not be read: {exception.Message}");
             }
 
             var activationChanged = false;
             foreach (var entry in Plugins)
             {
-                _reportIndicatorVisibility(entry.Id, false);
+                _reportIndicatorVisibility(_vaultPath, entry.Id, false);
                 entry.CanChangeActivation = entry.IsAvailable;
                 entry.NotifyActivationAvailabilityChanged();
                 entry.IsEnabled = _enabledPluginIds.Contains(entry.Id);
@@ -188,7 +190,7 @@ public sealed class PluginManager
             else
             {
                 await StopEntryAsync(entry, cancellationToken);
-                _reportIndicatorVisibility(entry.Id, false);
+                _reportIndicatorVisibility(_vaultPath, entry.Id, false);
                 _enabledPluginIds.Remove(entry.Id);
                 entry.IsEnabled = false;
                 entry.Status = "Available";
@@ -252,26 +254,30 @@ public sealed class PluginManager
 
         try
         {
+            // Capture this run's vault because plugin callbacks can outlive a subsequent folder switch.
+            var contextVaultPath = _vaultPath;
             var configurationDirectory = _activationStore
-                .GetPluginConfigurationDirectory(_vaultPath, entry.Id);
+                .GetPluginConfigurationDirectory(contextVaultPath, entry.Id);
             var context = new PluginHostContext(
-                _vaultPath,
+                contextVaultPath,
                 configurationDirectory,
-                _saveActiveNoteAsync,
-                _reportStatus,
-                _reportIndicatorStatus,
-                _refreshDocumentsAsync);
+                cancellation => _saveActiveNoteAsync(contextVaultPath, cancellation),
+                message => _reportStatus(contextVaultPath, message),
+                status => _reportIndicatorStatus(contextVaultPath, status),
+                _refreshDocumentsAsync is null
+                    ? null
+                    : cancellation => _refreshDocumentsAsync(contextVaultPath, cancellation));
             await entry.DiscoveredPlugin.Instance.StartAsync(context, cancellationToken);
             entry.IsRunning = true;
             entry.Status = "Active";
-            _reportIndicatorVisibility(entry.Id, true);
+            _reportIndicatorVisibility(contextVaultPath, entry.Id, true);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             entry.IsRunning = false;
             entry.Status = $"Could not start: {exception.Message}";
-            _reportIndicatorVisibility(entry.Id, false);
-            _reportStatus($"{entry.Name} could not start: {exception.Message}");
+            _reportIndicatorVisibility(_vaultPath, entry.Id, false);
+            _reportStatus(_vaultPath, $"{entry.Name} could not start: {exception.Message}");
         }
     }
 
@@ -293,7 +299,8 @@ public sealed class PluginManager
         foreach (var entry in Plugins.Where(plugin => plugin.IsRunning))
         {
             await StopEntryAsync(entry, cancellationToken);
-            _reportIndicatorVisibility(entry.Id, false);
+            // Retain the stopped plugin's vault so delayed UI work cannot alter a replacement vault.
+            _reportIndicatorVisibility(_vaultPath ?? string.Empty, entry.Id, false);
             entry.Status = entry.IsEnabled ? "Inactive" : "Available";
         }
     }

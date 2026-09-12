@@ -147,6 +147,59 @@ public sealed class GitSynchronizationServiceTests
     }
 
     [Fact]
+    public async Task SynchronizeAsync_RefreshesDocumentsAfterPullBeforeAPushFailure()
+    {
+        if (!GitIsAvailable())
+        {
+            return;
+        }
+
+        using var repository = new DisposableGitRepository();
+        repository.Initialize();
+        repository.CloneForRemoteChanges();
+        File.WriteAllText(
+            Path.Combine(repository.RemoteWorkingCopy, "remote-added.md"),
+            "remote addition visible after pull");
+        RunGit(repository.RemoteWorkingCopy, "add", "remote-added.md");
+        RunGit(repository.RemoteWorkingCopy, "commit", "-m", "Remote addition");
+        RunGit(repository.RemoteWorkingCopy, "push");
+
+        var refreshCalls = 0;
+        var configurationDirectory = Path.Combine(
+            repository.WorkingCopy,
+            ".note",
+            "plugins",
+            "git-integration");
+        var service = new GitSynchronizationService(
+            new GitProcessRunner("git", TimeSpan.FromSeconds(30)),
+            new GitSynchronizationLog(configurationDirectory));
+        var context = new PluginHostContext(
+            repository.WorkingCopy,
+            configurationDirectory,
+            _ => Task.FromResult(true),
+            _ => { },
+            RefreshDocumentsAsync: _ =>
+            {
+                refreshCalls++;
+                // Advance the remote during reconciliation to prove refresh happens before the eventual push.
+                File.WriteAllText(
+                    Path.Combine(repository.RemoteWorkingCopy, "push-race.md"),
+                    "remote change after pull");
+                RunGit(repository.RemoteWorkingCopy, "add", "push-race.md");
+                RunGit(repository.RemoteWorkingCopy, "commit", "-m", "Push race");
+                RunGit(repository.RemoteWorkingCopy, "push");
+                return Task.CompletedTask;
+            });
+
+        var result = await service.SynchronizeAsync(context);
+
+        Assert.False(result.Succeeded);
+        Assert.Contains("Git push failed", result.Message);
+        Assert.Equal(1, refreshCalls);
+        Assert.True(File.Exists(Path.Combine(repository.WorkingCopy, "remote-added.md")));
+    }
+
+    [Fact]
     public async Task InspectAsync_RejectsARepositoryWithoutAnUpstream()
     {
         if (!GitIsAvailable())
@@ -233,6 +286,8 @@ public sealed class GitSynchronizationServiceTests
 
         public string VerificationCopy { get; }
 
+        public string RemoteWorkingCopy => Path.Combine(Root, "remote-working");
+
         public void Initialize()
         {
             RunGit(Root, "init", "--bare", BareRemote);
@@ -263,6 +318,14 @@ public sealed class GitSynchronizationServiceTests
 
         public void CloneForVerification()
             => RunGit(Root, "clone", BareRemote, VerificationCopy);
+
+        public void CloneForRemoteChanges()
+        {
+            // A second clone models a remote NoteManager instance making changes during synchronization.
+            RunGit(Root, "clone", BareRemote, RemoteWorkingCopy);
+            RunGit(RemoteWorkingCopy, "config", "user.name", "Remote NoteManager Tests");
+            RunGit(RemoteWorkingCopy, "config", "user.email", "remote-tests@example.invalid");
+        }
 
         public void Dispose()
         {

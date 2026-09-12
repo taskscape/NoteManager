@@ -8,6 +8,103 @@ namespace NoteManager.App.Tests;
 [Trait("Category", "Database")]
 public sealed class MarkdownTagSaveRefreshTests
 {
+    [Fact]
+    public async Task RefreshMarkdownFolderAsync_WhenGitPullChangesFiles_RefreshesContentTagsAndSearchWithoutReplacingDraft()
+    {
+        using var folder = new TemporaryNoteFolder();
+        var draftPath = folder.WriteNote("Draft.md", "draft before synchronization");
+        var changedPath = folder.WriteNote(
+            "Changed.md",
+            "tags:\n  - old-tag\n\nold cached content");
+        var deletedPath = folder.WriteNote("Deleted.md", "note removed by remote synchronization");
+
+        using var viewModel = new MainViewModel();
+        try
+        {
+            await viewModel.LoadMarkdownFolderAsync(folder.Path, draftPath);
+            await WaitForIndexAsync(viewModel);
+            var draft = Assert.IsType<NoteItem>(viewModel.SelectedNote);
+            draft.PlainTextContent = "draft typed while Git synchronization was running";
+
+            // These writes model a remote pull changing an unselected note, adding a note, and deleting a note.
+            File.WriteAllText(
+                changedPath,
+                "tags:\n  - remote-tag\n\nremote content search marker");
+            folder.WriteNote(
+                "Added.md",
+                "tags:\n  - added-tag\n\nremote content search marker");
+            File.Delete(deletedPath);
+
+            await viewModel.RefreshMarkdownFolderAsync();
+            await WaitForIndexAsync(viewModel);
+
+            Assert.Same(draft, viewModel.SelectedNote);
+            Assert.True(draft.IsDirty);
+            Assert.Equal("draft typed while Git synchronization was running", draft.PlainTextContent);
+            Assert.Contains(viewModel.NavigationItems, item => item.FilterKey == "remote-tag");
+            Assert.Contains(viewModel.NavigationItems, item => item.FilterKey == "added-tag");
+            Assert.DoesNotContain(viewModel.NavigationItems, item => item.FilterKey == "old-tag");
+            Assert.DoesNotContain(viewModel.NotesView, note => note.SourceFilePath == deletedPath);
+
+            viewModel.SearchText = "remote content search marker";
+            await WaitForSearchAsync(viewModel);
+
+            // Search must read the rebuilt disk index while the selected editor continues to hold its newer draft.
+            Assert.Equal(
+                ["Added.md", "Changed.md"],
+                viewModel.NotesView.Select(note => note.FileName).OrderBy(name => name));
+        }
+        finally
+        {
+            viewModel.Dispose();
+            SqliteConnection.ClearAllPools();
+        }
+    }
+
+    [Fact]
+    public async Task RefreshMarkdownFolderAsync_WhenGitPullReplacesTheSelectedNote_ReloadsItsCachedContent()
+    {
+        using var folder = new TemporaryNoteFolder();
+        var selectedPath = folder.WriteNote(
+            "Selected.md",
+            "tags:\n  - original-tag\n\nold selected content");
+
+        using var viewModel = new MainViewModel();
+        try
+        {
+            await viewModel.LoadMarkdownFolderAsync(folder.Path, selectedPath);
+            await WaitForIndexAsync(viewModel);
+            Assert.Equal(
+                "tags:\n  - original-tag\n\nold selected content",
+                viewModel.SelectedNote!.PlainTextContent);
+
+            // Git replaces this selected worktree file, so refresh must discard its old loaded buffer.
+            File.WriteAllText(
+                selectedPath,
+                "tags:\n  - remote-tag\n\nremote selected search marker");
+
+            await viewModel.RefreshMarkdownFolderAsync();
+            await WaitForIndexAsync(viewModel);
+
+            Assert.Equal(
+                "tags:\n  - remote-tag\n\nremote selected search marker",
+                viewModel.SelectedNote!.PlainTextContent);
+            Assert.Contains(viewModel.NavigationItems, item => item.FilterKey == "remote-tag");
+            Assert.DoesNotContain(viewModel.NavigationItems, item => item.FilterKey == "original-tag");
+
+            viewModel.SearchText = "remote selected search marker";
+            await WaitForSearchAsync(viewModel);
+
+            // The selected note's refreshed disk content must also be searchable after the index rebuild.
+            Assert.Equal(["Selected.md"], viewModel.NotesView.Select(note => note.FileName));
+        }
+        finally
+        {
+            viewModel.Dispose();
+            SqliteConnection.ClearAllPools();
+        }
+    }
+
     [Theory]
     [MemberData(nameof(RawMarkdownTagChanges))]
     public async Task TrySaveSelectedNote_RawMarkdownTagChangesSynchronizeTagsNavigationAndSearch(
