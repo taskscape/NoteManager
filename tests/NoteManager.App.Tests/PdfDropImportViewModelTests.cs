@@ -9,6 +9,98 @@ namespace NoteManager.App.Tests;
 public sealed class PdfDropImportViewModelTests
 {
     [Fact]
+    public async Task ImportPdfFilesAsync_UnselectedTarget_EmbedsOnlyInTargetNote()
+    {
+        var testRoot = CreateTestRoot();
+        var vaultRoot = Directory.CreateDirectory(Path.Combine(testRoot, "vault")).FullName;
+        var outsideRoot = Directory.CreateDirectory(Path.Combine(testRoot, "outside")).FullName;
+        var firstNotePath = Path.Combine(vaultRoot, "first.md");
+        var secondNotePath = Path.Combine(vaultRoot, "second.md");
+        var sourcePath = Path.Combine(outsideRoot, "Report.pdf");
+        File.WriteAllText(firstNotePath, "# First note");
+        File.WriteAllText(secondNotePath, "# Second note");
+        File.WriteAllText(sourcePath, "dropped PDF");
+
+        using var viewModel = new MainViewModel();
+        try
+        {
+            await viewModel.LoadMarkdownFolderAsync(vaultRoot, firstNotePath);
+            await WaitForIndexAsync(viewModel);
+            var firstNote = Assert.Single(
+                viewModel.NotesView,
+                note => note.FileName == "first.md");
+            var targetNote = Assert.Single(
+                viewModel.NotesView,
+                note => note.FileName == "second.md");
+            // Select A explicitly so the import exercises the unselected-row target B.
+            viewModel.SelectedNote = firstNote;
+            Assert.Same(firstNote, viewModel.SelectedNote);
+
+            // A row drop supplies the unselected row and no caret, which appends exactly one embed to it.
+            await viewModel.ImportPdfFilesAsync(targetNote, [sourcePath], insertionIndex: null);
+            await WaitForIndexAsync(viewModel);
+
+            // Index refresh can rehydrate the item, so assert the selected note's stable file identity.
+            Assert.Equal("second.md", viewModel.SelectedNote?.FileName);
+            Assert.Equal("# First note", firstNote.PlainTextContent);
+            Assert.Equal("# First note", File.ReadAllText(firstNotePath));
+            Assert.Equal(1, CountEmbeds(targetNote.PlainTextContent));
+            Assert.Equal(1, CountEmbeds(File.ReadAllText(secondNotePath)));
+            Assert.Contains("![[Report.pdf]]", targetNote.PlainTextContent);
+        }
+        finally
+        {
+            viewModel.Dispose();
+            SqliteConnection.ClearAllPools();
+            DeleteTestRoot(testRoot);
+        }
+    }
+
+    [Fact]
+    public async Task ImportPdfFilesAsync_UnselectedTargetWithUnsavedConflict_PreservesCurrentDraft()
+    {
+        var testRoot = CreateTestRoot();
+        var vaultRoot = Directory.CreateDirectory(Path.Combine(testRoot, "vault")).FullName;
+        var outsideRoot = Directory.CreateDirectory(Path.Combine(testRoot, "outside")).FullName;
+        var firstNotePath = Path.Combine(vaultRoot, "first.md");
+        var secondNotePath = Path.Combine(vaultRoot, "second.md");
+        var sourcePath = Path.Combine(outsideRoot, "Report.pdf");
+        File.WriteAllText(firstNotePath, "# First note");
+        File.WriteAllText(secondNotePath, "# Second note");
+        File.WriteAllText(sourcePath, "dropped PDF");
+
+        using var viewModel = new MainViewModel();
+        try
+        {
+            await viewModel.LoadMarkdownFolderAsync(vaultRoot, firstNotePath);
+            await WaitForIndexAsync(viewModel);
+            var firstNote = Assert.Single(
+                viewModel.NotesView,
+                note => note.FileName == "first.md");
+            var targetNote = Assert.Single(
+                viewModel.NotesView,
+                note => note.FileName == "second.md");
+            viewModel.SelectedNote = firstNote;
+            firstNote.PlainTextContent = "# Unsaved draft";
+            // An external revision forces selection to reject saving A before it can switch to B.
+            File.WriteAllText(firstNotePath, "# External revision");
+
+            await viewModel.ImportPdfFilesAsync(targetNote, [sourcePath], insertionIndex: null);
+
+            Assert.Same(firstNote, viewModel.SelectedNote);
+            Assert.Equal("# Unsaved draft", firstNote.PlainTextContent);
+            Assert.Equal("# Second note", File.ReadAllText(secondNotePath));
+            Assert.False(File.Exists(Path.Combine(vaultRoot, "Report.pdf")));
+        }
+        finally
+        {
+            viewModel.Dispose();
+            SqliteConnection.ClearAllPools();
+            DeleteTestRoot(testRoot);
+        }
+    }
+
+    [Fact]
     public async Task ImportPdfFilesAsync_SaveDuringPausedImport_EmbedsAndPreservesCopy()
     {
         var testRoot = CreateTestRoot();
@@ -385,6 +477,10 @@ public sealed class PdfDropImportViewModelTests
 
         Assert.True(viewModel.IsSearchActive);
     }
+
+    // Counting embeds verifies that a routed drop cannot append the same PDF more than once.
+    private static int CountEmbeds(string content)
+        => content.Split("![[", StringSplitOptions.None).Length - 1;
 
     // Shared cleanup keeps each race test isolated even when it creates more than one vault.
     private static string CreateTestRoot()

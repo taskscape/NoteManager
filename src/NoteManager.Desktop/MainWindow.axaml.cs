@@ -70,6 +70,9 @@ public partial class MainWindow : Window
             handledEventsToo: true);
         DragDrop.AddDragOverHandler(this, MainWindow_OnDragOver);
         DragDrop.AddDropHandler(this, MainWindow_OnDrop);
+        // Editor handlers preserve the caret only for drops that actually land in the editor.
+        DragDrop.AddDragOverHandler(MarkdownEditor, MarkdownEditor_OnDragOver);
+        DragDrop.AddDropHandler(MarkdownEditor, MarkdownEditor_OnDrop);
     }
 
     private MainViewModel ViewModel => (MainViewModel)DataContext!;
@@ -372,28 +375,60 @@ public partial class MainWindow : Window
 
     private void MainWindow_OnDragOver(object? sender, DragEventArgs e)
     {
+        SetPdfDragEffects(e, ViewModel.SelectedNote);
+    }
+
+    private async void MainWindow_OnDrop(object? sender, DragEventArgs e)
+    {
+        // A window-background drop appends to the current note; it must not reuse a stale editor caret.
+        await HandlePdfDropAsync(e, ViewModel.SelectedNote, insertionIndex: null);
+    }
+
+    private void NoteRow_OnDragOver(object? sender, DragEventArgs e)
+    {
+        SetPdfDragEffects(e, (sender as Control)?.DataContext as NoteItem);
+    }
+
+    private async void NoteRow_OnDrop(object? sender, DragEventArgs e)
+    {
+        // A row has no caret, so pass null and let the import append to that row's note.
+        await HandlePdfDropAsync(
+            e,
+            (sender as Control)?.DataContext as NoteItem,
+            insertionIndex: null);
+    }
+
+    private void MarkdownEditor_OnDragOver(object? sender, DragEventArgs e)
+    {
+        SetPdfDragEffects(e, ViewModel.SelectedNote);
+    }
+
+    private async void MarkdownEditor_OnDrop(object? sender, DragEventArgs e)
+    {
+        // Only a direct editor drop is allowed to use the editor's current insertion point.
+        await HandlePdfDropAsync(e, ViewModel.SelectedNote, MarkdownEditor.CaretIndex);
+    }
+
+    private void SetPdfDragEffects(DragEventArgs e, NoteItem? targetNote)
+    {
         var hasPdf = e.DataTransfer.TryGetFiles()?
             .Select(file => file.TryGetLocalPath())
-            .Any(path => path is not null
-                         && Path.GetExtension(path).Equals(
-                             ".pdf",
-                             StringComparison.OrdinalIgnoreCase)) == true;
+            .Any(IsPdfPath) == true;
         e.DragEffects = hasPdf
-                        && (ViewModel.CanImportPdfIntoNote(ViewModel.SelectedNote)
+                        && (ViewModel.CanImportPdfIntoNote(targetNote)
                             || ViewModel.CanImportPdfDocuments)
             ? DragDropEffects.Copy
             : DragDropEffects.None;
     }
 
-    private async void MainWindow_OnDrop(object? sender, DragEventArgs e)
+    private async Task HandlePdfDropAsync(
+        DragEventArgs e,
+        NoteItem? targetNote,
+        int? insertionIndex)
     {
-        var note = ViewModel.SelectedNote;
         var paths = e.DataTransfer.TryGetFiles()?
             .Select(file => file.TryGetLocalPath())
-            .Where(path => path is not null
-                           && Path.GetExtension(path).Equals(
-                               ".pdf",
-                               StringComparison.OrdinalIgnoreCase))
+            .Where(IsPdfPath)
             .Cast<string>()
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray() ?? [];
@@ -404,18 +439,25 @@ public partial class MainWindow : Window
         }
 
         e.Handled = true;
-        if (ViewModel.CanImportPdfIntoNote(note))
+        if (ViewModel.CanImportPdfIntoNote(targetNote))
         {
+            // MainViewModel saves the prior draft before switching and revalidates this exact note after copying.
             await ViewModel.ImportPdfFilesAsync(
-                note!,
+                targetNote!,
                 paths,
-                MarkdownEditor.CaretIndex);
+                insertionIndex);
             return;
         }
 
         // With no selected Markdown editor, a window drop imports documents for conversion.
         await ImportPdfDocumentsAsync(paths);
     }
+
+    private static bool IsPdfPath(string? path)
+        => path is not null
+           && Path.GetExtension(path).Equals(
+               ".pdf",
+               StringComparison.OrdinalIgnoreCase);
 
     private async void Tags_OnClick(object? sender, RoutedEventArgs e)
     {

@@ -263,10 +263,13 @@
                      SelectedItem="{Binding SelectedNote, Mode=TwoWay}">
               <ListBox.ItemTemplate>
                 <DataTemplate>
+                  <!-- Row drops are handled by the row so an unselected note becomes the explicit PDF target. -->
                   <Border Padding="0,0,0,14"
                           AutomationProperties.Name="{Binding Title}"
                           BorderBrush="{DynamicResource BorderBrush}"
-                          BorderThickness="0,0,0,1">
+                          BorderThickness="0,0,0,1"
+                          DragDrop.DragOver="NoteRow_OnDragOver"
+                          DragDrop.Drop="NoteRow_OnDrop">
                     <StackPanel Spacing="5">
                       <TextBlock FontSize="15"
                                  FontWeight="SemiBold"
