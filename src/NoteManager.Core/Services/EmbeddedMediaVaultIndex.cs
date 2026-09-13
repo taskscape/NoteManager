@@ -7,19 +7,19 @@ public sealed class EmbeddedMediaVaultIndex
     private readonly string _rootFolder;
     // The media snapshot must retain the same file identity semantics as the active vault.
     private readonly StringComparer _pathComparer;
-    // Keep the indexed media snapshot so viewer resolution shares its candidate set with publication.
-    private readonly IReadOnlyList<string> _mediaPaths;
+    // Keep every vault file so conversion-source metadata can resolve DOCX and other non-previewable documents.
+    private readonly IReadOnlyList<string> _vaultFilePaths;
     private readonly IReadOnlyDictionary<string, string[]> _filesByFolder;
 
     private EmbeddedMediaVaultIndex(
         string rootFolder,
         StringComparer pathComparer,
-        IReadOnlyList<string> mediaPaths,
+        IReadOnlyList<string> vaultFilePaths,
         IReadOnlyDictionary<string, string[]> filesByFolder)
     {
         _rootFolder = rootFolder;
         _pathComparer = pathComparer;
-        _mediaPaths = mediaPaths;
+        _vaultFilePaths = vaultFilePaths;
         _filesByFolder = filesByFolder;
     }
 
@@ -35,10 +35,6 @@ public sealed class EmbeddedMediaVaultIndex
             .EnumerateFiles(rootFolder, "*", options)
             .OrderBy(path => path, pathComparer)
             .ToArray();
-        var mediaPaths = allPaths
-            .Where(path => EmbeddedMediaReference.TryGetKind(path, out _))
-            .ToArray();
-
         // Grouping the snapshot by folder avoids enumerating the same directory
         // once per Markdown note when a conversion output contains many notes.
         var filesByFolder = allPaths
@@ -53,7 +49,7 @@ public sealed class EmbeddedMediaVaultIndex
         return new EmbeddedMediaVaultIndex(
             rootFolder,
             pathComparer,
-            mediaPaths,
+            allPaths,
             filesByFolder);
     }
 
@@ -69,12 +65,21 @@ public sealed class EmbeddedMediaVaultIndex
                 GetKind(target)))
             .ToArray();
 
+        // Conversion metadata survives a Markdown rename, unlike implicit basename matching, and exposes non-media sources as attachments.
+        var conversionSourceReferences = MarkdownMetadataParser
+            .ParseDocumentConversionSourceReferences(markdown)
+            .Select(target => new EmbeddedMediaReference(
+                target,
+                Resolve(target, markdownFilePath),
+                GetKindOrDocument(target)));
+
         // Related documents follow explicit Markdown embeds so authored content
         // keeps its original order, while automatic attachments remain below it.
         var resolvedPaths = new HashSet<string>(
             embeddedReferences.Select(reference => reference.ResolvedPath),
             _pathComparer);
-        var relatedDocuments = ResolveRelatedDocuments(markdownFilePath)
+        var relatedDocuments = conversionSourceReferences
+            .Concat(ResolveRelatedDocuments(markdownFilePath))
             .Where(reference => resolvedPaths.Add(reference.ResolvedPath));
 
         return [.. embeddedReferences, .. relatedDocuments];
@@ -159,6 +164,11 @@ public sealed class EmbeddedMediaVaultIndex
             nameof(target));
     }
 
+    private static EmbeddedMediaKind GetKindOrDocument(string target)
+        => EmbeddedMediaReference.TryGetKind(target, out var kind)
+            ? kind
+            : EmbeddedMediaKind.Document;
+
     public string Resolve(string rawTarget, string markdownFilePath)
     {
         try
@@ -182,7 +192,7 @@ public sealed class EmbeddedMediaVaultIndex
             target,
             markdownFilePath,
             _rootFolder,
-            _mediaPaths,
+            _vaultFilePaths,
             _pathComparer);
         // Preserve unresolved text for the viewer while the shared policy prevents external or ambiguous files loading.
         return resolution.ResolvedPath ?? target;

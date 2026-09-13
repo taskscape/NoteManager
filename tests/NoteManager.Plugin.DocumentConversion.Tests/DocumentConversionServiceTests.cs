@@ -51,7 +51,8 @@ public sealed class DocumentConversionServiceTests
         Assert.Equal(1, result.Converted);
         Assert.Equal(1, result.Failures);
         Assert.Equal("newer.txt", Path.GetFileName(attemptedInputs[0]));
-        Assert.Equal("converted", File.ReadAllText(Path.ChangeExtension(newerInput, ".md")));
+        // Generated content keeps the converter payload before the durable source marker appended during publication.
+        Assert.StartsWith("converted", File.ReadAllText(Path.ChangeExtension(newerInput, ".md")));
         Assert.False(File.Exists(Path.ChangeExtension(olderInput, ".md")));
         Assert.True(File.Exists(existingTemporaryOutput));
         // Shared temporary names do not establish ownership, so both existing and newly appearing files survive.
@@ -83,9 +84,11 @@ public sealed class DocumentConversionServiceTests
             new DocumentConversionLog(context.ConfigurationDirectory),
             new DocumentConversionOptions()).ConvertPendingAsync(context);
 
-        // The embed persists the PDF-to-Markdown relationship for NoteManager's media viewer.
+        // The marker suppresses duplicate rescans after rename while the embed preserves the established PDF viewer relationship.
         Assert.Equal(
-            $"Extracted PDF text{Environment.NewLine}{Environment.NewLine}![[report.pdf]]",
+            $"Extracted PDF text{Environment.NewLine}{Environment.NewLine}"
+            + "<!-- notemanager-conversion-source: report.pdf -->"
+            + $"{Environment.NewLine}{Environment.NewLine}![[report.pdf]]",
             File.ReadAllText(Path.ChangeExtension(sourcePath, ".md")));
         Assert.True(File.Exists(sourcePath));
         Assert.Equal(1, result.Converted);
@@ -215,6 +218,49 @@ public sealed class DocumentConversionServiceTests
 
         Assert.Single(pending);
         Assert.Equal(document, pending[0].InputPath);
+    }
+
+    [Theory]
+    [InlineData(".docx")]
+    [InlineData(".pdf")]
+    public async Task ConvertPendingAsync_ConvertedNoteRenamed_DoesNotRegenerateOriginalOutput(
+        string extension)
+    {
+        using var folder = new TemporaryFolder();
+        var sourcePath = Path.Combine(folder.Path, $"invoice{extension}");
+        var originalOutputPath = Path.ChangeExtension(sourcePath, ".md");
+        var renamedOutputPath = Path.Combine(folder.Path, "paid.md");
+        File.WriteAllText(sourcePath, "source");
+        var conversionCount = 0;
+        var runner = new StubRunner((_, output) =>
+        {
+            conversionCount++;
+            File.WriteAllText(output, "converted");
+            return SuccessResult();
+        });
+        var context = CreateContext(folder.Path);
+        var service = new DocumentConversionService(
+            runner,
+            new DocumentConversionLog(context.ConfigurationDirectory),
+            new DocumentConversionOptions());
+
+        await service.ConvertPendingAsync(context);
+        File.Move(originalOutputPath, renamedOutputPath);
+        var rescan = await service.ConvertPendingAsync(context);
+
+        // The marker moves with paid.md, so the surviving source no longer looks pending at invoice.md.
+        Assert.Equal(1, conversionCount);
+        Assert.Equal(0, rescan.Total);
+        Assert.False(File.Exists(originalOutputPath));
+        Assert.True(File.Exists(sourcePath));
+        Assert.Contains(
+            $"notemanager-conversion-source: {Uri.EscapeDataString(Path.GetFileName(sourcePath))}",
+            File.ReadAllText(renamedOutputPath));
+        if (extension.Equals(".pdf", StringComparison.OrdinalIgnoreCase))
+        {
+            // PDF output keeps its authored embed while the marker provides the scan-stable identity.
+            Assert.Contains("![[invoice.pdf]]", File.ReadAllText(renamedOutputPath));
+        }
     }
 
     [Fact]
@@ -392,7 +438,8 @@ public sealed class DocumentConversionServiceTests
         Assert.Equal(1, result.Converted);
         Assert.Equal(1, result.Failures);
         Assert.False(File.Exists(Path.ChangeExtension(invalidInput, ".md")));
-        Assert.Equal("converted", File.ReadAllText(Path.ChangeExtension(validInput, ".md")));
+        // A later valid output retains its conversion result before the source marker is added.
+        Assert.StartsWith("converted", File.ReadAllText(Path.ChangeExtension(validInput, ".md")));
         Assert.Empty(Directory.EnumerateDirectories(folder.Path, ".notemanager-doc2md-*"));
         Assert.Equal(1, refreshCount);
         Assert.Contains(statuses, status => status.Contains(

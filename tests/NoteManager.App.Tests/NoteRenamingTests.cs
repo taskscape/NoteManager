@@ -62,6 +62,32 @@ public sealed class NoteRenamingTests
     }
 
     [Theory]
+    [InlineData(".docx")]
+    [InlineData(".pdf")]
+    public async Task RenameNote_WithConversionSourceMetadata_PreservesOriginalAttachment(
+        string extension)
+    {
+        using var folder = new TemporaryNoteFolder();
+        var sourcePath = Path.Combine(folder.Path, $"invoice{extension}");
+        var originalPath = folder.WriteNote(
+            "invoice.md",
+            $"<!-- notemanager-conversion-source: {Uri.EscapeDataString(Path.GetFileName(sourcePath))} -->");
+        File.WriteAllText(sourcePath, "source");
+
+        using var viewModel = new MainViewModel();
+        await viewModel.LoadMarkdownFolderAsync(folder.Path, originalPath);
+
+        var renamed = viewModel.TryRenameNote(viewModel.SelectedNote!, "paid");
+
+        // The marker moves with the Markdown file, keeping the untouched source available after the user renames the note.
+        Assert.True(renamed);
+        Assert.False(File.Exists(originalPath));
+        Assert.Equal(
+            Path.GetFullPath(sourcePath),
+            Assert.Single(viewModel.SelectedNote!.EmbeddedMediaReferences).ResolvedPath);
+    }
+
+    [Theory]
     [InlineData("")]
     [InlineData("../outside.md")]
     [InlineData("not-markdown.txt")]

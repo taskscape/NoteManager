@@ -67,6 +67,27 @@ public static partial class MarkdownMetadataParser
         return embeds.ToArray();
     }
 
+    /// <summary>
+    /// Reads the durable source marker written by Document Conversion so a note
+    /// can retain its original document after the Markdown filename changes.
+    /// </summary>
+    public static string[] ParseDocumentConversionSourceReferences(string markdown)
+    {
+        var sources = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (Match match in DocumentConversionSourceRegex().Matches(markdown))
+        {
+            var target = match.Groups["target"].Value.Trim();
+            if (target.Length > 0 && seen.Add(target))
+            {
+                sources.Add(target);
+            }
+        }
+
+        return sources.ToArray();
+    }
+
     private static string NormalizeTag(string value)
     {
         var tag = value.Trim();
@@ -95,4 +116,8 @@ public static partial class MarkdownMetadataParser
 
     [GeneratedRegex(@"!\[\[\s*(?<target>[^\]\r\n|#]+?\.(?:pdf|png|jpe?g|bmp))(?:[|#][^\]\r\n]*)?\s*\]\]", RegexOptions.IgnoreCase)]
     private static partial Regex InlineEmbeddedMediaEmbedRegex();
+
+    // The converter URI-escapes the target, keeping this single-line metadata marker safe for filenames with Markdown syntax.
+    [GeneratedRegex(@"<!--\s*notemanager-conversion-source:\s*(?<target>.*?)\s*-->", RegexOptions.IgnoreCase)]
+    private static partial Regex DocumentConversionSourceRegex();
 }

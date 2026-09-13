@@ -136,6 +136,37 @@ public sealed class EmbeddedMediaReferenceTests
         }
     }
 
+    [Theory]
+    [InlineData("invoice.docx", EmbeddedMediaKind.Document)]
+    [InlineData("invoice.pdf", EmbeddedMediaKind.Pdf)]
+    public void LoadFolder_ConversionSourceMetadata_ResolvesRenamedNoteAttachment(
+        string sourceFileName,
+        EmbeddedMediaKind expectedKind)
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            $"NoteManager.App.Tests.{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        try
+        {
+            File.WriteAllText(Path.Combine(root, sourceFileName), "source");
+            // The durable marker represents a converted note after it has been renamed from invoice.md to paid.md.
+            File.WriteAllText(
+                Path.Combine(root, "paid.md"),
+                $"<!-- notemanager-conversion-source: {Uri.EscapeDataString(sourceFileName)} -->");
+
+            var note = Assert.Single(MarkdownFolderService.LoadFolder(root).Notes);
+
+            var attachment = Assert.Single(note.EmbeddedMediaReferences);
+            Assert.Equal(sourceFileName, attachment.FileName);
+            Assert.Equal(expectedKind, attachment.Kind);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
     /// <summary>
     /// Verifies that only PDFs gain an automatic inline preview; a related
     /// image without an explicit Markdown embed remains a document attachment.

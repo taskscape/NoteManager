@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using NoteManager.App.Services;
 using NoteManager.Plugins;
 
 namespace NoteManager.Plugin.DocumentConversion;
@@ -172,6 +173,7 @@ public sealed class DocumentConversionService(
                     try
                     {
                         // Complete post-processing while the output is private so failures cannot affect a concurrent note.
+                        AppendConversionSourceReference(document, stagingOutput.OutputPath);
                         AppendOriginalPdfEmbed(document, stagingOutput.OutputPath);
                         if (!TryPublishStagedDocument(stagingOutput.OutputPath, document.OutputPath))
                         {
@@ -247,6 +249,8 @@ public sealed class DocumentConversionService(
             AttributesToSkip = FileAttributes.ReparsePoint
         };
 
+        var convertedInputPaths = FindConvertedInputPaths(vaultPath, enumerationOptions);
+
         return Directory.EnumerateFiles(vaultPath, "*", enumerationOptions)
             .Where(IsSupportedDocument)
             .Select(path => new FileInfo(path))
@@ -262,10 +266,62 @@ public sealed class DocumentConversionService(
                 file.FullName,
                 Path.ChangeExtension(file.FullName, ".md"),
                 file.LastWriteTimeUtc))
-            .Where(document => !File.Exists(document.OutputPath))
+            // A conversion source marker stays with its Markdown note through renames, preventing regeneration at the old basename.
+            .Where(document => !File.Exists(document.OutputPath)
+                               && !convertedInputPaths.Contains(document.InputPath))
             .OrderByDescending(document => document.LastWriteTimeUtc)
             .ThenBy(document => document.InputPath, StringComparer.OrdinalIgnoreCase)
             .ToArray();
+    }
+
+    private static HashSet<string> FindConvertedInputPaths(
+        string vaultPath,
+        EnumerationOptions enumerationOptions)
+    {
+        var normalizedVaultPath = Path.GetFullPath(vaultPath);
+        var convertedInputPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var markdownPath in Directory.EnumerateFiles(
+                     normalizedVaultPath,
+                     "*.md",
+                     enumerationOptions))
+        {
+            try
+            {
+                var markdownFolder = Path.GetDirectoryName(markdownPath)!;
+                foreach (var sourceReference in MarkdownMetadataParser
+                             .ParseDocumentConversionSourceReferences(File.ReadAllText(markdownPath)))
+                {
+                    var sourcePath = Path.GetFullPath(Path.Combine(
+                        markdownFolder,
+                        ObsidianEmbedTarget.GetLiteralPath(sourceReference)
+                            .Replace('/', Path.DirectorySeparatorChar)));
+                    if (IsPathInsideVault(sourcePath, normalizedVaultPath))
+                    {
+                        convertedInputPaths.Add(sourcePath);
+                    }
+                }
+            }
+            catch (Exception exception) when (
+                exception is IOException
+                or UnauthorizedAccessException
+                or ArgumentException
+                or NotSupportedException
+                or UriFormatException)
+            {
+                // An unreadable or malformed Markdown note must not stop unrelated conversion work.
+            }
+        }
+
+        return convertedInputPaths;
+    }
+
+    private static bool IsPathInsideVault(string path, string vaultPath)
+    {
+        var relativePath = Path.GetRelativePath(vaultPath, path);
+        return !Path.IsPathRooted(relativePath)
+               && !relativePath.Equals("..", StringComparison.Ordinal)
+               && !relativePath.StartsWith($"..{Path.DirectorySeparatorChar}", StringComparison.Ordinal);
     }
 
     private static bool IsSupportedDocument(string path)
@@ -434,6 +490,22 @@ public sealed class DocumentConversionService(
         File.AppendAllText(
             stagedOutputPath,
             $"{Environment.NewLine}{Environment.NewLine}![[{escapedSourcePath}]]");
+    }
+
+    private static void AppendConversionSourceReference(
+        PendingDocument document,
+        string stagedOutputPath)
+    {
+        var outputDirectory = Path.GetDirectoryName(document.OutputPath)!;
+        var sourcePath = Path.GetRelativePath(outputDirectory, document.InputPath)
+            .Replace(Path.DirectorySeparatorChar, '/');
+        // URI escaping makes the metadata a stable literal path even when a filename contains comment or Markdown delimiters.
+        var escapedSourcePath = Uri.EscapeDataString(sourcePath);
+
+        // Persist this relationship inside the output because File.Move carries it through a note rename without touching shared sources.
+        File.AppendAllText(
+            stagedOutputPath,
+            $"{Environment.NewLine}{Environment.NewLine}<!-- notemanager-conversion-source: {escapedSourcePath} -->");
     }
 
     private static bool TryReadItemResult(
